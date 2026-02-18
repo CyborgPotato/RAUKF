@@ -8,7 +8,7 @@ from tqdm import tqdm
 class Ukf:
     """Unscented Kalman Filter (UKF) estimator"""
     
-    def __init__(self, dynamics, measurements, inputs, slow_states, x0, P0, Q0, R0, kappa=0, sigma=0.5, robust=False):
+    def __init__(self, dynamics, measurements, inputs, slow_states, x0, P0, Q0, R0, kappa=0, sigma=0.5, lambda0=0.2, delta0=0.2,a=5.,b=5., robust=False):
         """
         Estimator variables:
             plant: (nonlinear) plant dynamics F, e.g. neuron dynamics
@@ -36,10 +36,10 @@ class Ukf:
 
         # Robust UKF parameters
         if self.robust:
-            self.lambda0 = 0.2     # lambda0 \in (0, 1)
-            self.a = 5.0
-            self.delta0 = 0.2      # delta0 \in (0, 1)
-            self.b = 5.0
+            self.lambda0 = lambda0     # lambda0 \in (0, 1)
+            self.a = a
+            self.delta0 = delta0      # delta0 \in (0, 1)
+            self.b = b
             self.threshold = chi2.ppf(1 - sigma, df=self.y.shape[1])
 
         # Sigmapoint parameters
