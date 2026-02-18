@@ -1,0 +1,26 @@
+[project]
+name = "raukf"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "brainpy[cpu]>=2.7.2",
+    "gnureadline>=8.2.13",
+    "jaxley>=0.11.5",
+    "matplotlib>=3.10.7",
+    "numba>=0.62.1",
+    "numpy>=2.3.4",
+    "pyside6>=6.10.0",
+    "pyyaml>=6.0.3",
+    "scipy>=1.16.3",
+    "seaborn>=0.13.2",
+    "tqdm>=4.67.1",
+]
+
+[dependency-groups]
+dev = [
+    "ipython>=9.7.0",
+    "python-lsp-server>=1.13.1",
+    "readline>=6.2.4.2",
+]
