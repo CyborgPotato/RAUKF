@@ -154,7 +154,7 @@ class RAUKF(bp.DynamicalSystem):
     z_x = jnp.zeros((z_.shape[0],x.size))
     z_y = jnp.ones((z_.shape[0],self.obs.shape[1]))
     alphas = bm.ones(z_.shape[0])/(2*(x.size+self.kappa))
-    alphas.at[0].set(self.kappa / (x.size+self.kappa))
+    alphas = alphas.at[0].set(self.kappa / (x.size+self.kappa))
     for zi,z in enumerate(z_):
       sigmapoint_dict = dict(state_dict)
       self.set_x(sigmapoint_dict,z)
@@ -232,7 +232,7 @@ class RAUKF(bp.DynamicalSystem):
     y_cov = z_y - new_y.T
     Pyy = (alphas * y_cov.T)@y_cov + self.R
     Pxy = (alphas * x_cov.T)@y_cov
-
+    
     K = Pxy @ bm.linalg.inv(Pyy)
     innovation = self.obs[self.obs_i[0]]-new_y
     # jax.debug.print(
@@ -241,6 +241,9 @@ class RAUKF(bp.DynamicalSystem):
     #   y=y_cov,
     # )
 
+    # jax.debug.print("z_x: {x}",x=z_x)
+    # jax.debug.print("alphas: {x}",x=alphas)
+    # jax.debug.print("new_x: {x}",x=new_x)
     xhat = new_x + K@innovation
     Phat = new_P - K@Pxy.T
 
