@@ -15,29 +15,31 @@ bm.set_platform('cpu')
 class Exponential(bp.Projection):
   def __init__(self, pre, post, delay, prob, g_max, tau, E):
     super().__init__()
+    self.g_max_v = bm.Variable(1)
+    self.g_max_v.value = self.g_max_v.at[:].set(g_max)
     self.pron = bp.dyn.FullProjAlignPost(
       pre=pre,
       delay=delay,
       # Event-driven computation
-      comm=bp.dnn.EventCSRLinear(bp.conn.FixedProb(prob, pre=pre.num, post=post.num), g_max),
+      comm=bp.dnn.EventCSRLinear(bp.conn.FixedProb(prob, pre=pre.num, post=post.num), self.g_max_v),
       syn=bp.dyn.Expon(size=post.num, tau=tau),# Exponential synapse
       out=bp.dyn.COBA(E=E), # COBA network
       post=post
     )
 
 class EINet(bp.DynamicalSystem):
-  def __init__(self, ne=3200, ni=800):
+  def __init__(self, ne=100, ni=100):
     super().__init__()
     lif_pars = dict(V_rest=-60., V_th=-50., V_reset=-70., tau=20.,
                     tau_ref=5.,V_initializer=bp.init.Normal(-55., 4.))
     self.E = bp.dyn.LifRef(ne, **lif_pars)
     self.I = bp.dyn.LifRef(ni, **lif_pars)
-    self.E2E = Exponential(self.E, self.E, 0., 0.02, 0.6*2, 2., 0.)
-    self.E2I = Exponential(self.E, self.I, 0., 0.02, 0.6*2, 2., 0.)
-    self.I2E = Exponential(self.I, self.E, 0., 0.02, 6.7*2, 5., -80.)
-    self.I2I = Exponential(self.I, self.I, 0., 0.02, 6.7*2, 5., -80.)
+    self.E2E = Exponential(self.E, self.E, 0., 0.1, 0.6*16, 2., 0.)
+    self.E2I = Exponential(self.E, self.I, 0., 0.1, 0.6*8, 2., 0.)
+    self.I2E = Exponential(self.I, self.E, 0., 0.05, 6.7*4, 5., -80.)
+    self.I2I = Exponential(self.I, self.I, 0., 0.05, 6.7*4, 5., -80.)
     self.input = bm.Variable(1,batch_axis=0)
-    self.input = self.input.at[:].set(1e3)
+    self.input = self.input.at[:].set(0)
 
     self.lfp = bm.Variable(1,batch_axis=0)
     self.calc_lfp()
@@ -45,9 +47,9 @@ class EINet(bp.DynamicalSystem):
   def calc_lfp(self):
     self.lfp.value = self.lfp.at[:].set(
       -bm.sum(self.E2E.pron.syn.g) +\
-      -bm.sum(self.E2I.pron.syn.g) +\
-       bm.sum(self.I2E.pron.syn.g) +\
-       bm.sum(self.I2I.pron.syn.g)
+       bm.sum(self.I2E.pron.syn.g)# +\
+       # bm.sum(self.I2I.pron.syn.g)/10
+      # -bm.sum(self.E2I.pron.syn.g) +\
     )
 
   def update(self):
@@ -221,26 +223,30 @@ from importlib import reload
 reload(main_)
 from main import RAUKF, Ukf
 
+t_stop = 1e3
+dbs_times = np.arange(2500,8000,20)
+
 net = EINet()
 
-net_dbs = DBS(net,[net.E],np.arange(2500,2600,100),0.1,0)
+net_dbs = DBS(net,[net.E],dbs_times,0.5,0)
 
 runner = bp.DSRunner(net_dbs, monitors=['net.lfp'])
 
-_=runner.run(.5e3)
+_=runner.run(t_stop)
 
 observation = runner.mon['net.lfp']
-I_inj = 0*observation
 
+net__ = EINet()
 net_kf = RAUKF(
-  DBS(EINet(),[net.E],np.arange(2500,2600,100),0.5,0),
+  DBS(net__,[net__.E],dbs_times,0.5,0),
   [ # What internal states to track
     r'.*lfp$',
     # r'.*V$',
   ],
   [ # What states to estimate
-    # r'.*input$',
-    r'.*DBS_aff_act$',
+    r'.*input$',
+    r'.*weight$',
+    # r'.*DBS_aff_act$',
   ],
   [
     r'.*lfp$',
@@ -248,18 +254,51 @@ net_kf = RAUKF(
   observation,
 )
 net_kf.robust = False
-net_kf.x.value = net_kf.x.at[-1].set(0.5)
-# net_kf.P.value = net_kf.P.at[0,0].set(1e1)
-# net_kf.P.value = net_kf.P.at[-1,-1].set(1e-3)
-# net_kf.Q.value = net_kf.Q.at[0,0].set(1e-3)
-# net_kf.Q.value = net_kf.Q.at[-1,-1].set(1e-3)
-net_kf.R.value = net_kf.R.at[-1,-1].set(1e-6)
-kf_run = bp.DSRunner(net_kf, monitors=['net.net.lfp','net.DBS_aff_act'])
-_=kf_run.run(.5e3)
+net_kf.lambda0 = 0
+net_kf.delta0 = 0
+net_kf.a = 500
+net_kf.b = 500
+net_kf.threshold = 100
+net_kf.robust_after = 100
+# net_kf.x.value = net_kf.x.at[0].set(0)
+# net_kf.x.value = net_kf.x.at[-1].set(1)
+net_kf.x.value = bm.array(np.array([0.,0,12,6,33.,33.]))
+net_kf.P.value = net_kf.P.at[0,0].set(1e-3)
+net_kf.P.value = net_kf.P.at[1,1].set(1e3)
+net_kf.P.value = net_kf.P.at[-1,-1].set(1e-9)
+net_kf.P.value = net_kf.P.at[-2,-2].set(1e-9)
+net_kf.P.value = net_kf.P.at[-3,-3].set(1e-9)
+net_kf.P.value = net_kf.P.at[-4,-4].set(1e-9)
+net_kf.Q.value = net_kf.Q.at[0,0].set(1e-15)
+net_kf.Q.value = net_kf.Q.at[1,1].set(1e-15)
+net_kf.Q.value = net_kf.Q.at[-1,-1].set(1e-15)
+net_kf.Q.value = net_kf.Q.at[-2,-2].set(1e-15)
+net_kf.Q.value = net_kf.Q.at[-3,-3].set(1e-15)
+net_kf.Q.value = net_kf.Q.at[-4,-4].set(1e-15)
+# # net_kf.Q.value = net_kf.Q.at[0,0].set(1e-3)
+# # net_kf.Q.value = net_kf.Q.at[-1,-1].set(1e0)
+# net_kf.R.value = net_kf.R.at[-1,-1].set(1e-6)
+kf_run = bp.DSRunner(net_kf, monitors=[
+  'net.net.lfp',
+  'net.net.input',
+  'net.net.E2E.pron.comm.weight',
+  'net.net.E2I.pron.comm.weight',
+  'net.net.I2I.pron.comm.weight',
+  'net.net.I2E.pron.comm.weight',
+])
+_=kf_run.run(t_stop)
 plt.plot(runner.mon['net.lfp'],color='g')
+yl = plt.ylim()
 plt.plot(kf_run.mon['net.net.lfp'],color='k')
-plt.twinx()
-plt.plot(kf_run.mon['net.DBS_aff_act'],color='r')
+plt.ylim(*yl)
+# plt.twinx()
+# plt.plot(kf_run.mon['net.net.E2E.pron.comm.weight'],color='r')
+# plt.plot(kf_run.mon['net.net.I2E.pron.comm.weight'],color='g')
+# plt.plot(kf_run.mon['net.net.I2I.pron.comm.weight'],color='b')
+# plt.plot(kf_run.mon['net.net.E2I.pron.comm.weight'],color='m')
+# plt.ylim(-1,20)
+# plt.figure()
+# plt.plot(kf_run.mon['net.net.input'],color='r')
 # plt.figure()
 # bp.visualize.raster_plot(runner.mon.ts,runner.mon['net.I.spike'])
 # plt.xlim(2490,2510)
