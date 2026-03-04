@@ -22,22 +22,24 @@ def sys_input(t):
   return -2.8 * exp * ((1+bm.sin((t-t_start)*2*np.pi/1000*100)))
 
 class RateNet(bp.DynamicalSystem):
-  def __init__(self, n=3, inp_func=None):
+  def __init__(self, n=3, inp_func=None, OU=True):
     super().__init__()
+    self.global_input = bm.Variable(1)
     self.pops = bp.dyn.QIF(
       n,
       tau = 1,
       eta = -5.0,
       delta = 0.1,
       J = 15.,
-      # noise parameters
-      x_ou_mean = 1e-0,
-      x_ou_sigma = 2e-1,
-      x_ou_tau = 1.0,
-      y_ou_mean = 1e-0,
-      y_ou_sigma = 2e-1,
-      y_ou_tau = 1.0,
-
+      **({
+        # noise parameters
+        'x_ou_mean': 1e-0,
+        'x_ou_sigma': 2e-1,
+        'x_ou_tau': 1.0,
+        'y_ou_mean': 1e-0,
+        'y_ou_sigma': 2e-1,
+        'y_ou_tau': 1.0,
+      } if OU else {})
       # state initializer
       # x_initializer = Uniform(max_val=0.05),
       # y_initializer = Uniform(max_val=0.05),      
@@ -46,7 +48,7 @@ class RateNet(bp.DynamicalSystem):
     
   def update(self):
     if self.inp_func is None:
-      return self.pops()
+      return self.pops(self.global_input.value[0])
     else:
       t = bp.share.load('t')
       return self.pops(self.inp_func(t))
@@ -114,14 +116,15 @@ class RAUKF(bp.DynamicalSystem):
     obs_size = observation.shape[1]
     self.R = bm.Variable((obs_size,obs_size))
     bm.fill_diagonal(self.P,np.array([1e-3]*self.x.size))
-    self.P.value = self.P.at[2,2].set(1e-1)
-    bm.fill_diagonal(self.Q,np.array([1e-1]*self.x.size))
-    bm.fill_diagonal(self.R,np.array([1e-5]*obs_size))
+    self.P.value = self.P.at[-1,-1].set(1e-1)
+    bm.fill_diagonal(self.Q,np.array([1e-2]*self.x.size))
+    bm.fill_diagonal(self.R,np.array([1e-2]*obs_size))
     self.phi = bm.Variable(1)
     self.mu = bm.Variable(1)
     self.kappa = 3
     self.resample = True
     self.robust = True
+    self.robust_after = 0
     self.threshold = 0.45
     self.lambda0 = 0.2
     self.delta0 = 0.2
@@ -146,6 +149,7 @@ class RAUKF(bp.DynamicalSystem):
       v[k] = v[k].at[:].set(x[i:i+ksz])
       i+=ksz
     self.net.load_state_dict(state_dict)
+    return state_dict
   
   def sample_points(self,state_dict,z_):
     x = bm.concatenate([dict_get(
@@ -171,47 +175,6 @@ class RAUKF(bp.DynamicalSystem):
     z_x = bm.array(z_x)
     z_y = bm.array(z_y)
     return z_x, z_y, alphas
-
-  def adapt_covariances(self,K,innovation,state_dict):
-    # Update Q
-    phi = self.phi.value[0]
-    lambda_ = bm.max(bm.array([
-      self.lambda0,
-      (phi - self.a * self.threshold) / phi
-    ]))
-    self.Q.value = (1 - lambda_) * self.Q + lambda_ * (K @ innovation.T @ (innovation @ K.T))
-
-    # Re-sample sigmapoints with new state estimate
-    z_ = self.unscented_transform(self.x,self.P)
-    z_x,z_y,alphas = self.sample_points(state_dict, z_)
-    new_y = z_y.T @ alphas
-    y_cov = z_y - new_y.T
-    Pyy = (alphas * y_cov.T)@y_cov + self.R
-
-    # Update R
-    # residual_y = y_k - self.plant.observe(x_hat.T)
-    # sigma_yy = (self.alphas * Pyy).T @ Pyy
-    delta = bm.max(bm.array([
-      self.delta0,
-      (phi - self.b * self.threshold) / phi
-    ]))
-    self.R.value = (1 - delta) * self.R  + delta * (y_cov.T @ y_cov + Pyy)
-
-    # Correct estimates
-    new_x = z_x.T @ alphas
-    x_cov = z_x - new_x.T
-    new_P = (alphas * x_cov.T)@x_cov + self.Q
-    new_P = (new_P+new_P.T)/2
-    Pxy = (alphas * x_cov.T)@y_cov
-    Pyy = (alphas * y_cov.T)@y_cov + self.R
-    K = Pxy @ bm.linalg.inv(Pyy)
-    innovation = self.obs[self.obs_i[0]]-new_y
-    
-    xhat = new_x + K@innovation
-    Phat = new_P - K@Pxy.T
-
-    self.x.value = xhat
-    self.P.value = Phat
   
   def update(self):
     state_dict = self.net.state_dict()
@@ -250,16 +213,53 @@ class RAUKF(bp.DynamicalSystem):
     self.x.value = xhat
     self.P.value = Phat
 
+    t_now = bp.share.load('t')
     if self.robust:
       self.phi.value = self.phi.at[:].set(innovation @ bm.linalg.inv(Pyy) @ innovation.T)
-      def adapt():
-        self.adapt_covariances(K,innovation,state_dict)
-      def noop():pass
-      cond(bm.any(self.phi > self.threshold),adapt,noop)
-      # if bm.any(self.phi > self.threshold):
-        # self.adapt_covariances(K,innovation)
+      adapt = bm.any(self.phi > self.threshold)
+      adapt *= t_now > self.robust_after
+      # Update Q
+      phi = self.phi.value[0]
+      lambda_ = bm.max(bm.array([
+        self.lambda0,
+        (phi - self.a * self.threshold) / phi
+      ]))
+      self.Q.value = ((1 - lambda_) * self.Q + lambda_ * (K @ innovation.T @ (innovation @ K.T)))*adapt + self.Q*(1-adapt)
 
-    self.net()    
+      # Re-sample sigmapoints with new state estimate
+      z_ = self.unscented_transform(self.x,self.P)
+      z_x,z_y,alphas = self.sample_points(state_dict, z_)
+      new_y = z_y.T @ alphas
+      y_cov = z_y - new_y.T
+      Pyy = (alphas * y_cov.T)@y_cov + self.R
+
+      # Update R
+      # residual_y = y_k - self.plant.observe(x_hat.T)
+      # sigma_yy = (self.alphas * Pyy).T @ Pyy
+      delta = bm.max(bm.array([
+        self.delta0,
+        (phi - self.b * self.threshold) / phi
+      ]))
+      self.R.value = ((1 - delta) * self.R  + delta * (y_cov.T @ y_cov + Pyy))*adapt + self.R*(1-adapt)
+
+      # Correct estimates
+      new_x = z_x.T @ alphas
+      x_cov = z_x - new_x.T
+      new_P = (alphas * x_cov.T)@x_cov + self.Q
+      new_P = (new_P+new_P.T)/2
+      Pxy = (alphas * x_cov.T)@y_cov
+      Pyy = (alphas * y_cov.T)@y_cov + self.R
+      K = Pxy @ bm.linalg.inv(Pyy)
+      innovation = self.obs[self.obs_i[0]]-new_y
+
+      xhat = new_x + K@innovation
+      Phat = new_P - K@Pxy.T
+
+      self.x.value = xhat*adapt + self.x*(1-adapt)
+      self.P.value = Phat*adapt + self.P*(1-adapt)
+
+    self.net.load_state_dict(state_dict)
+    self.net()
     state_dict = self.net.state_dict()
     self.set_x(state_dict,xhat)
     self.obs_i.value += 1
@@ -272,43 +272,47 @@ if __name__=='__main__':
 
   _=runner.run(t_sim)
 
-  observation = runner.mon['pops.x']#,runner.mon['pops.y']]
+  observation = runner.mon['pops.x']
 
   net_kf = RAUKF(
-    RateNet(1),
+    RateNet(1,None,False),
     [ # What internal states to track
       r'QIF\d+\.x',
       r'QIF\d+\.y',
     ],
     [ # What states to estimate
-      r'QIF\d+\.input$'
+      r'.*global_input$'
     ],
     [ # What our measurement/observation is
       r'QIF\d+\.x',
+      # r'QIF\d+\.y',
     ],
     observation
   )
-  net_kf.R.value = net_kf.R.at[:].set(1e-6)
+  # net_kf.R.value = net_kf.R.at[:].set(1e-6)
   net_kf.robust = True
   net_kf.lambda0 = 0
   net_kf.delta0 = 0
-  net_kf.a = 100
-  net_kf.b = 10
-  net_kf.threshold = 0.5
+  net_kf.a = 10
+  net_kf.b = 1000
+  net_kf.threshold = .7
+
+  net_kf.x = net_kf.x.at[-1].set(3)
   
-  runner = bp.DSRunner(net_kf, monitors=['net.pops.x','P','net.pops.input','R','phi'])
+  runner = bp.DSRunner(net_kf, monitors=['net.pops.x','net.pops.y','P','net.global_input','R','phi'])
   _=runner.run(t_sim)
 
   plt.plot(observation)
   plt.plot(runner.mon['net.pops.x'])
+  # plt.plot(runner.mon['net.pops.y'])
   plt.twinx()
   ts = runner.mon['ts']
   plt.plot(sys_input(ts),color='r')
-  plt.plot(runner.mon['net.pops.input'],color='k')
-  plt.twinx()
-  plt.plot(runner.mon['R'][:,0,0],color='g')
-  plt.twinx()
-  plt.plot(runner.mon['phi'],color='m')
+  plt.plot(runner.mon['net.global_input'],color='k')
+  # plt.twinx()
+  # plt.plot(runner.mon['R'][:,0,0],color='g')
+  # plt.twinx()
+  # plt.plot(runner.mon['phi'],color='m')
   plt.show()
   # plt.figure()
   # plt.xlabel('Time (ms)')
