@@ -109,6 +109,7 @@ class RAUKF(bp.DynamicalSystem):
     x = np.concatenate(list(self._x.values())+list(self._p.values()))
     
     self.x = bm.Variable(x.size)
+    self.x.value = x
     self.P = bm.Variable((self.x.size,self.x.size))
     self.Q = bm.Variable((self.x.size,self.x.size))
     self.obs = bm.array(observation)
