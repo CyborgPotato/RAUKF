@@ -19,7 +19,7 @@ def sys_input(t):
   t_start = 100
   t_stop = 200
   exp = bm.exp(-(t-t_start)/((t_stop-t_start)/2)) * (t>=t_start)
-  return -2.8 * exp * ((1+bm.sin((t-t_start)*2*np.pi/1000*100)))
+  return -10.8 * exp #* ((1+bm.sin((t-t_start)*2*np.pi/1000*100)))
 
 class RateNet(bp.DynamicalSystem):
   def __init__(self, n=3, inp_func=None, OU=True):
@@ -48,7 +48,7 @@ class RateNet(bp.DynamicalSystem):
     
   def update(self):
     if self.inp_func is None:
-      return self.pops(self.global_input.value[0])
+      return self.pops(self.global_input)
     else:
       t = bp.share.load('t')
       return self.pops(self.inp_func(t))
@@ -107,7 +107,8 @@ class RAUKF(bp.DynamicalSystem):
     self._x = {k:np.array(self.x_vals[k]) for k in self.x0}
     self._p = {k:np.array(self.x_vals[k]) for k in self.p0}
     x = np.concatenate(list(self._x.values())+list(self._p.values()))
-    
+
+    self.t_stab = 0
     self.x = bm.Variable(x.size)
     self.x.value = x
     self.P = bm.Variable((self.x.size,self.x.size))
@@ -162,6 +163,7 @@ class RAUKF(bp.DynamicalSystem):
     alphas = alphas.at[0].set(self.kappa / (x.size+self.kappa))
     for zi,z in enumerate(z_):
       sigmapoint_dict = dict(state_dict)
+      self.net.load_state_dict(state_dict)
       self.set_x(sigmapoint_dict,z)
       self.net()
       res_dict = self.net.state_dict()
@@ -173,11 +175,13 @@ class RAUKF(bp.DynamicalSystem):
       ) for k in self.r0])
       z_x = z_x.at[zi].set(sig_x)
       z_y = z_y.at[zi].set(sig_y)
+    self.net.load_state_dict(state_dict)
     z_x = bm.array(z_x)
     z_y = bm.array(z_y)
     return z_x, z_y, alphas
   
   def update(self):
+    t_now = bp.share.load('t')
     state_dict = self.net.state_dict()
     z_ = self.unscented_transform(self.x,self.P)
     z_x,z_y,alphas = self.sample_points(state_dict, z_)
@@ -211,14 +215,16 @@ class RAUKF(bp.DynamicalSystem):
     xhat = new_x + K@innovation
     Phat = new_P - K@Pxy.T
 
-    self.x.value = xhat
-    self.P.value = Phat
+    apply_kf = t_now > self.t_stab
+    
+    self.x.value = apply_kf*xhat + (1-apply_kf)*self.x
+    self.P.value = apply_kf*Phat + (1-apply_kf)*self.P
 
-    t_now = bp.share.load('t')
     if self.robust:
       self.phi.value = self.phi.at[:].set(innovation @ bm.linalg.inv(Pyy) @ innovation.T)
       adapt = bm.any(self.phi > self.threshold)
       adapt *= t_now > self.robust_after
+      adapt *= apply_kf
       # Update Q
       phi = self.phi.value[0]
       lambda_ = bm.max(bm.array([
@@ -260,20 +266,20 @@ class RAUKF(bp.DynamicalSystem):
       self.P.value = Phat*adapt + self.P*(1-adapt)
 
     self.net.load_state_dict(state_dict)
+    self.set_x(state_dict,xhat)
     self.net()
     state_dict = self.net.state_dict()
-    self.set_x(state_dict,xhat)
     self.obs_i.value += 1
     return xhat
 
 if __name__=='__main__':
   t_sim = 500
-  net = RateNet(1,sys_input)
+  net = RateNet(1,sys_input,True)
   runner = bp.DSRunner(net, monitors=['pops.y','pops.x'])
 
   _=runner.run(t_sim)
 
-  observation = runner.mon['pops.x']
+  observation = np.c_[runner.mon['pops.x']]#,runner.mon['pops.y']]
 
   net_kf = RAUKF(
     RateNet(1,None,False),
@@ -290,15 +296,29 @@ if __name__=='__main__':
     ],
     observation
   )
-  # net_kf.R.value = net_kf.R.at[:].set(1e-6)
-  net_kf.robust = True
-  net_kf.lambda0 = 0
-  net_kf.delta0 = 0
-  net_kf.a = 10
-  net_kf.b = 1000
-  net_kf.threshold = .7
+  net_kf.Q.value = np.diag(np.array([
+      1e-6,
+      1e-10,
+      1e-3,
+  ],dtype=np.float32))
+  net_kf.P.value = np.diag(np.array([
+      1e-6,
+      1e-10,
+      1e-3,
+  ],dtype=np.float32))
 
-  net_kf.x = net_kf.x.at[-1].set(3)
+  net_kf.R.value = np.diag(np.array([
+      1e-10,
+      # 1e-10,
+  ],dtype=np.float32))
+  net_kf.robust = False
+  net_kf.lambda0 = 0.2
+  net_kf.delta0 = 0.2
+  net_kf.a = 5
+  net_kf.b = 5
+  net_kf.threshold = .45
+
+  # net_kf.x = net_kf.x.at[-1].set(3)
   
   runner = bp.DSRunner(net_kf, monitors=['net.pops.x','net.pops.y','P','net.global_input','R','phi'])
   _=runner.run(t_sim)
