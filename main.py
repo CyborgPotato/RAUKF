@@ -109,6 +109,8 @@ class RAUKF(bp.DynamicalSystem):
     x = np.concatenate(list(self._x.values())+list(self._p.values()))
 
     self.t_stab = 0
+    self.adjust_every = 0
+    self.last_adjust = bm.Variable(1)
     self.x = bm.Variable(x.size)
     self.x.value = x
     self.P = bm.Variable((self.x.size,self.x.size))
@@ -216,6 +218,8 @@ class RAUKF(bp.DynamicalSystem):
     Phat = new_P - K@Pxy.T
 
     apply_kf = t_now > self.t_stab
+    apply_kf *= (t_now-self.last_adjust) > self.adjust_every
+    self.last_adjust.value = apply_kf*t_now + self.last_adjust * (1-apply_kf)
     
     self.x.value = apply_kf*xhat + (1-apply_kf)*self.x
     self.P.value = apply_kf*Phat + (1-apply_kf)*self.P
@@ -265,10 +269,13 @@ class RAUKF(bp.DynamicalSystem):
       self.x.value = xhat*adapt + self.x*(1-adapt)
       self.P.value = Phat*adapt + self.P*(1-adapt)
 
+    old_x = bm.concatenate([dict_get(
+      state_dict,self.x_map[k]
+    ) for k in chain(self.x0,self.p0)])
+      
     self.net.load_state_dict(state_dict)
-    self.set_x(state_dict,xhat)
+    self.set_x(state_dict,self.x)
     self.net()
-    state_dict = self.net.state_dict()
     self.obs_i.value += 1
     return xhat
 
@@ -296,6 +303,7 @@ if __name__=='__main__':
     ],
     observation
   )
+  net_kf.adjust_every = 1
   net_kf.Q.value = np.diag(np.array([
       1e-6,
       1e-10,
