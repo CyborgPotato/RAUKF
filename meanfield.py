@@ -121,22 +121,116 @@ class SNN(bp.DynamicalSystem):
     return
 
 class MeanField(bp.DynamicalSystem):
-  pass
+  def __init__(self):
+    super().__init__()
+
+    self.ve = bm.Variable(1)
+    self.vi = bm.Variable(1)
+    self.W  = bm.Variable(1)
+
+    self.Pe = bm.Variable(bm.array([
+      -49.8, 5.06, -25, 1.4, -0.41, 10.5, -36, 7.4, 1.2, -40.7
+    ]))
+    self.Pi = bm.Variable(bm.array([
+      -51.4, 4.0, -8.3, 0.2, -0.5, 1.4, -14.6, 4.5, 2.8, -15.3
+    ]))
+    # TODO Set these variables
+    self.Ke = bm.Variable(1)
+    self.tau_e = bm.Variable(1)
+    self.Qe = bm.Variable(1)
+    self.Ki = bm.Variable(1)
+    self.tau_i = bm.Variable(1)
+    self.Qi = bm.Variable(1)
+    self.gL = bm.Variable(1)
+    self.Ee = bm.Variable(1)
+    self.Ei = bm.Variable(1)
+    self.EL = bm.Variable(1)
+
+    self.int_v = bp.odeint(self.dv)
+    self.int_W = bp.odeint(self.dW)
+
+  def dv(self, v, t, W, ve, vi,P):
+    return (self.F(ve,vi,W,P)-v)/self.T
+
+  def dW(self, W, t, ve, vi):
+    return -W/self.tau_w + self.b*ve + a*(self.uv(ve,vi,W)-EL)
+
+  def uGx(self, v, K, tau, Q):
+    return v*K*tau*Q
+  
+  def uv(self, ve, vi, W):
+    uGe = self.uGx(ve, self.Ke, self.tau_e, self.Qe)
+    uGi = self.uGx(vi, self.Ki, self.tau_i, self.Qi)
+    uG  = uGe + uGi + self.gL
+    return (uGe*self.Ee + uGi*self.Ei + self.gL*self.EL - W)/uG
+
+  def stdvx(self, v, K, tau, Q):
+    raise NotImplementedError()
+
+  def stdv(self, ve, vi, W):
+    stdve = self.stdvx()
+    stdvi = self.stdvx()
+    return bm.sqrt(stdve + stdvi)
+
+  def tauv(self, ve, vi, W):
+    tauve_num = self.tauvx_num()
+    tauvi_num = self.tauvx_num()
+    tauve_den = self.tauvx_den()
+    tauvi_den = self.tauvx_den()
+    return (tauve_num+tauvi_num)/(tauve_den+tauvi_den)
+
+  def Veff_th(self, ve, vi, W, P):
+    uv   = self.uv  (ve,vi,W)
+    stdv = self.stdv(ve,vi,W)
+    tauv = self.tauv(ve,vi,W)
+
+    tauNv = tauv * self.gL / self.Cm
+
+    t1 = (uv-self.uv0)/self.duv
+    t2 = (stdv-self.stdv0)/self.dstdv
+    t3 = (tauNv-self.tauNv0)/self.dtauNv
+    t4 = t1*t1
+    t5 = t2*t2
+    t6 = t3*t3
+    t7 = t1*t2
+    t8 = t1*t3
+    t9 = t2*t3
+    
+    return P[0] + P[1]*t1 + P[2]*t2 + P[3]*t3 + P[4]*t4 +\
+      P[5]*t5 + P[6]*t6 + P[7]*t7 + P[8]*t8 + P[9]*t9
+
+  def F(self, ve, vi, W, P):
+    return jax.lax.erfc((self.Veff_th(ve,vi,W,P)-self.uv(ve,vi,W))/(bm.sqrt(2)*self.stdv(ve,vi,W)))/(2*self.tauv(ve,vi))
+  
+  def update(self, x=None):
+    t = bp.share['t']
+    dt = bp.share['dt']
+    ve = self.int_v(self.ve,t,self.W,self.ve,self.vi,self.Pe,dt=dt)
+    vi = self.int_v(self.vi,t,self.W,self.ve,self.vi,self,Pi,dt=dt)
+    W  = self.int_W(self.W,t,self.ve,self.vi,dt=dt)
+
+    self.ve.value = ve
+    self.vi.value = vi
+    self.W.value = W  
   
 if __name__=='__main__':
   t_stop = 1e3
 
-  net = SNN()
+  mean_net = MeanField()
+  mean_run = bp.DSRunner(mean_net)
 
-  snn_run = bp.DSRunner(net, monitors=['lfp','E.spike','I.spike'])
+  _=mean_run.run(t_stop)
+  # net = SNN()
 
-  _=snn_run.run(t_stop)
+  # snn_run = bp.DSRunner(net, monitors=['lfp','E.spike','I.spike'])
 
-  observation = snn_run.mon['lfp']
+  # _=snn_run.run(t_stop)
 
-  obs = observation#+np.random.normal(0,50,size=observation.shape)
+  # observation = snn_run.mon['lfp']
 
-  plt.plot(obs)
-  # plt.scatter(*snn_run.mon['E.spike'].nonzero(),marker='|')
-  # plt.scatter(*snn_run.mon['I.spike'].nonzero(),marker='|')
-  plt.show()
+  # obs = observation#+np.random.normal(0,50,size=observation.shape)
+
+  # plt.plot(obs)
+  # # plt.scatter(*snn_run.mon['E.spike'].nonzero(),marker='|')
+  # # plt.scatter(*snn_run.mon['I.spike'].nonzero(),marker='|')
+  # plt.show()
