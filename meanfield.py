@@ -124,11 +124,11 @@ class MeanField(bp.DynamicalSystem):
   pass
   
 if __name__=='__main__':
-  t_stop = .5e3
+  t_stop = 1e3
 
   net = SNN()
 
-  snn_run = bp.DSRunner(net, monitors=['lfp'])#,'E.spike','I.spike'])
+  snn_run = bp.DSRunner(net, monitors=['lfp','E.spike','I.spike'])
 
   _=snn_run.run(t_stop)
 
