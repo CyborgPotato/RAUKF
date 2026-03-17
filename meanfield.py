@@ -40,19 +40,45 @@ class AdExIF(bp.dyn.neurons.AdExIFLTC):
     self.gL.value = self.gL.at[:].set(gL)
 
   def dw(self, w, t, V):
-    dwdt = (self.a * (V - self.V_rest) - w) / self.tau_w
+    dwdt = (self.a * 1e-6 *  (V - self.V_rest) - w) / self.tau_w
     return dwdt
 
   def dV(self, V, t, w, I):
-    exp = self.gL * self.delta_T * bm.exp((V - self.V_T) / self.delta_T)
-    dVdt = (-self.gL * (V - self.V_rest) + exp - w + I) / self.tau
+    exp = self.gL * 1e-6 * self.delta_T * bm.exp((V - self.V_T) / self.delta_T)
+    dVdt = (-self.gL * 1e-6 * (V - self.V_rest) + exp - w + I) / (self.tau*1e-9)
     return dVdt
 
   def update(self, x=None):
+    t = share.load('t')/1e3
+    dt = share.load('dt')/1e3
     x = 0. if x is None else x
     x = self.sum_current_inputs(self.V.value, init=x)
-    return super().update(x)
-    
+
+    # integrate membrane potential
+    V, w = self.integral(self.V.value, self.w.value, t, x, dt)
+    V += self.sum_delta_inputs()
+
+    # spike, spiking time, and membrane potential reset
+    if isinstance(self.mode, bm.TrainingMode):
+      spike = self.spk_fun(V - self.V_th)
+      spike = stop_gradient(spike) if self.detach_spk else spike
+      if self.spk_reset == 'soft':
+        V -= (self.V_th - self.V_reset) * spike
+      elif self.spk_reset == 'hard':
+        V += (self.V_reset - V) * spike
+      else:
+        raise ValueError(f"Unknown spk_reset mode: {self.spk_reset}. Must be 'soft' or 'hard'.")
+      w += self.b * spike
+    else:
+      spike = V >= self.V_th
+      V = bm.where(spike, self.V_reset, V)
+      w = bm.where(spike, w + self.b, w)
+
+    self.V.value = V
+    self.w.value = w
+    self.spike.value = spike
+    return spike    
+
 class SNN(bp.DynamicalSystem):
   def __init__(self, noise=True, ne=8000, ni=2000):
     super().__init__()
@@ -61,7 +87,7 @@ class SNN(bp.DynamicalSystem):
       "V_rest": -63,
       "V_reset": -65,
       "V_T": -50,
-      "V_th": 20,
+      "V_th": -50,
       "tau_w": 500,
       "tau": 200,
       "gL": 10,
@@ -88,13 +114,13 @@ class SNN(bp.DynamicalSystem):
     )
     self.I.tau_ref = 5.
 
-    self.E2E = Exponential(self.E, self.E, 2, 0.05, 1.0, 5.,   0.)
-    self.E2I = Exponential(self.E, self.I, 2, 0.05, 1.0, 5.,   0.)
-    self.I2E = Exponential(self.I, self.E, 2, 0.05, 5.0, 5., -80.)
-    self.I2I = Exponential(self.I, self.I, 2, 0.05, 5.0, 5., -80.)
+    self.E2E = Exponential(self.E, self.E, 2, 0.05, 1.0e-6, 5e-3,   0.)
+    self.E2I = Exponential(self.E, self.I, 2, 0.05, 1.0e-6, 5e-3,   0.)
+    self.I2E = Exponential(self.I, self.E, 2, 0.05, 5.0e-6, 5e-3, -80.)
+    self.I2I = Exponential(self.I, self.I, 2, 0.05, 5.0e-6, 5e-3, -80.)
 
-    self.NE = bp.dyn.PoissonInput(self.E2E.pron.syn.g,500,2.5,1)
-    self.NI = bp.dyn.PoissonInput(self.E2I.pron.syn.g,500,2.5,1)
+    self.NE = bp.dyn.PoissonInput(self.E2E.pron.syn.g,400,1e-6,5e-3)
+    self.NI = bp.dyn.PoissonInput(self.E2I.pron.syn.g,400,1e-6,5e-3)
     
     self.calc_lfp()
 
@@ -124,9 +150,10 @@ class MeanField(bp.DynamicalSystem):
   def __init__(self):
     super().__init__()
     
-    self.ve = bm.Variable(bm.array([10.]))
-    self.vi = bm.Variable(bm.array([10.]))
-    self.W  = bm.Variable(1)
+    self.ve  = bm.Variable(bm.array([0.]))
+    self.vi  = bm.Variable(bm.array([0.]))
+    self.we  = bm.Variable(1)
+    self.wi  = bm.Variable(1)
 
     self.Pe = bm.Variable(bm.array([
       -49.8, 5.06, -25, 1.4, -0.41, 10.5, -36, 7.4, 1.2, -40.7
@@ -135,16 +162,23 @@ class MeanField(bp.DynamicalSystem):
       -51.4, 4.0, -8.3, 0.2, -0.5, 1.4, -14.6, 4.5, 2.8, -15.3
     ]))*1e-3
     # TODO Set these variables
-    self.Ke = bm.Variable(bm.array([Ne*p]))
+    self.g = bm.Variable(bm.array([0.2]))
+    self.pe = bm.Variable(bm.array([0.05]))
+    self.pi = bm.Variable(bm.array([0.05]))
+    self.N_tot = bm.Variable(bm.array([10000]))
+    self.N_ext_e = bm.Variable(bm.array([500]))
+    self.N_ext_i = bm.Variable(bm.array([500]))
+    self.Fe_ext = bm.Variable(bm.array([1.]))
+    self.Fi_ext = bm.Variable(bm.array([1.]))
     self.tau_e = bm.Variable(bm.array([5e-3]))
     self.Qe = bm.Variable(bm.array([1.5e-9]))
-    self.Ki = bm.Variable(bm.array([Ni*p]))
     self.tau_i = bm.Variable(bm.array([5e-3]))
     self.Qi = bm.Variable(bm.array([5e-9]))
     self.gL = bm.Variable(bm.array([10e-9]))
-    self.Ee = bm.Variable(bm.array([0]))
+    self.Ee = bm.Variable(bm.array([0.]))
     self.Ei = bm.Variable(bm.array([-80e-3]))
-    self.EL = bm.Variable(bm.array([-63e-3]))
+    self.ELe = bm.Variable(bm.array([-63e-3]))
+    self.ELi = bm.Variable(bm.array([-63e-3]))
     self.Cm = bm.Variable(bm.array([281e-9]))
     #
     self.uv0  = bm.Variable(bm.array([-60e-3]))
@@ -152,64 +186,23 @@ class MeanField(bp.DynamicalSystem):
     self.tauNv0 = bm.Variable(bm.array([0.5]))
     self.duv  = bm.Variable(bm.array([0.001e-3]))
     self.dstdv = bm.Variable(bm.array([0.006e-3]))
-    self.dtauNv = bm.Variable(bm.array([1]))
+    self.dtauNv = bm.Variable(bm.array([1.]))
     self.T = bm.Variable(bm.array([50e-3]))
-    self.tau_w = bm.Variable(bm.array([500e-3]))
-    self.b = bm.Variable(bm.array([30e-12]))
-    self.a = bm.Variable(bm.array([4e-12]))
+    self.tau_we = bm.Variable(bm.array([500e-3]))
+    self.tau_wi = bm.Variable(bm.array([500e-3]))
+    self.be = bm.Variable(bm.array([30e-12]))
+    self.ae = bm.Variable(bm.array([4e-12]))
+    self.bi = bm.Variable(bm.array([0.]))
+    self.ai = bm.Variable(bm.array([0.]))
 
     self.int_v = bp.odeint(self.dv)
-    self.int_W = bp.odeint(self.dW)
+    self.int_w = bp.odeint(self.dw)
 
-  def dv(self, v, t, W, ve, vi,P):
-    return (self.F(ve,vi,W,P)-v)/self.T
+  def dv(self, v, t, uv, stdv, tauv, P):
+    return (self.F(v,uv,stdv,tauv,P)-v)/self.T
 
-  def dW(self, W, t, ve, vi):
-    return -W/self.tau_w + self.b*ve + self.a*(self.uv(ve,vi,W)-self.EL)
-
-  def uGx(self, v, K, tau, Q):
-    return v*K*tau*Q
-  
-  def uv(self, ve, vi, W):
-    uGe = self.uGx(ve, self.Ke, self.tau_e, self.Qe)
-    uGi = self.uGx(vi, self.Ki, self.tau_i, self.Qi)
-    uG  = uGe + uGi + self.gL
-    return (uGe*self.Ee + uGi*self.Ei + self.gL*self.EL - W)/uG
-
-  def stdvx(self, v, K, tau, Q, E, uv):
-    uGe = self.uGx(v, K, tau, Q)
-    uGi = self.uGx(v, K, tau, Q)
-    uG  = uGe + uGi + self.gL
-    Us = Q/uG * (E-uv)
-    teff_m = self.Cm/uG
-    return K*v*bm.square(Us*tau)/(2*(teff_m+tau))
-
-  def stdv(self, ve, vi, W, uv):
-    stdve = self.stdvx(ve, self.Ke, self.tau_e, self.Qe, self.Ee, uv)
-    stdvi = self.stdvx(vi, self.Ki, self.tau_i, self.Qi, self.Ei, uv)
-    return bm.sqrt(stdve + stdvi)
-
-  def tauvx_num(self, v, K, tau, Q, E, uv):
-    uGe = self.uGx(v, K, tau, Q)
-    uGi = self.uGx(v, K, tau, Q)
-    uG  = uGe + uGi + self.gL
-    Us = Q/uG * (E-uv)
-    return K*v*bm.square(Us*tau)
-
-  def tauvx_den(self, v, K, tau, Q, E, uv):
-    uGe = self.uGx(v, K, tau, Q)
-    uGi = self.uGx(v, K, tau, Q)
-    uG  = uGe + uGi + self.gL
-    Us = Q/uG * (E-uv)
-    teff_m = self.Cm/uG
-    return K*v*bm.square(Us*tau)/(teff_m+tau)
-  
-  def tauv(self, ve, vi, W, uv):
-    tauve_num = self.tauvx_num(ve, self.Ke, self.tau_e, self.Qe, self.Ee, uv)
-    tauvi_num = self.tauvx_num(ve, self.Ke, self.tau_e, self.Qe, self.Ee, uv)
-    tauve_den = self.tauvx_den(vi, self.Ki, self.tau_i, self.Qi, self.Ei, uv)
-    tauvi_den = self.tauvx_den(vi, self.Ki, self.tau_i, self.Qi, self.Ei, uv)
-    return (tauve_num+tauvi_num)/(tauve_den+tauvi_den)
+  def dw(self, w, t, v, a, b, tau_w, uv, EL):
+    return -w/tau_w + b*v + a*(uv-EL)/tau_w
 
   def Veff_th(self, uv, stdv, tauv, P):
     tauNv = tauv * self.gL / self.Cm
@@ -227,46 +220,93 @@ class MeanField(bp.DynamicalSystem):
     return P[0] + P[1]*t1 + P[2]*t2 + P[3]*t3 + P[4]*t4 +\
       P[5]*t5 + P[6]*t6 + P[7]*t7 + P[8]*t8 + P[9]*t9
 
-  def F(self, ve, vi, W, P):
-    uv   = self.uv  (ve,vi,W)
-    stdv = self.stdv(ve,vi,W,uv)
-    tauv = self.tauv(ve,vi,W,uv)
-    return jax.lax.erfc((self.Veff_th(uv,stdv,tauv,P)-uv)/(bm.sqrt(2)*stdv))/(2*tauv)
-  
+  def F(self, v, uv, stdv, tauv, P):
+    return jax.lax.erfc(
+      (1e3*self.Veff_th(uv,stdv,tauv,P)-uv) / (bm.sqrt(2)*stdv)
+    ) / (2*tauv)
+
+  def volt_dyn(self, ve, vi, w):
+    g=self.g
+    pe=self.pe
+    pi=self.pi
+    N_tot=self.N_tot
+    Fe_ext=self.Fe_ext
+    N_ext_e=self.N_ext_e
+    Fi_ext=self.Fi_ext
+    N_ext_i=self.N_ext_i
+    Qe=self.Qe
+    Qi=self.Qi
+    tau_e=self.tau_e
+    tau_i=self.tau_i
+    gL=self.gL
+    Cm=self.Cm
+    Ee=self.Ee
+    Ei=self.Ei
+    EL=self.ELe
+    # firing rate
+    # 1e-6 represent spontaneous release of synaptic neurotransmitter
+    # or some intrinsic currents of neurons
+    fe = (ve + 1.0e-6) * (1. - g) * pe * N_tot + Fe_ext * N_ext_e
+    fi = (vi + 1.0e-6) * g * pi * N_tot + Fi_ext * N_ext_i
+
+    # conductance fluctuation and effective membrane time constant
+    mu_Ge, mu_Gi = Qe * tau_e * fe, Qi * tau_i * fi
+    mu_G = gL + mu_Ge + mu_Gi
+    T_m = Cm / mu_G
+
+    # membrane potential
+    mu_V = (mu_Ge * Ee + mu_Gi * Ei + gL * EL - w) / mu_G
+    # post-synaptic membrane potential event s around muV
+    U_e, U_i = Qe / mu_G * (Ee - mu_V), Qi / mu_G * (Ei - mu_V)
+    # Standard deviation of the fluctuations
+    sigma_V = bm.sqrt(
+        fe * (U_e * tau_e) ** 2 / (2. * (tau_e + T_m)) + fi * (U_i * tau_i) ** 2 / (2. * (tau_i + T_m)))
+    # Autocorrelation-time of the fluctuations
+    T_V_numerator = (fe * (U_e * tau_e) ** 2 + fi * (U_i * tau_i) ** 2)
+    T_V_denominator = (fe * (U_e * tau_e) ** 2 / (tau_e + T_m) + fi * (U_i * tau_i) ** 2 / (tau_i + T_m))
+    T_V = T_V_numerator / T_V_denominator
+    return mu_V, sigma_V, T_V
+
   def update(self, x=None):
-    t = bp.share['t']
-    dt = bp.share['dt']
-    ve = self.int_v(self.ve,t,self.W,self.ve,self.vi,self.Pe,dt=dt)
-    vi = self.int_v(self.vi,t,self.W,self.ve,self.vi,self.Pi,dt=dt)
-    W  = self.int_W(self.W,t,self.ve,self.vi,dt=dt)
+    t = bp.share['t']/1000
+    dt = bp.share['dt']/1000
+
+    volt_dyn_e = self.volt_dyn(self.ve,self.vi,self.we)
+    volt_dyn_i = self.volt_dyn(self.ve,self.vi,self.we)
+
+    ve = self.int_v(self.ve,t,*volt_dyn_e,self.Pe,dt=dt)
+    vi = self.int_v(self.vi,t,*volt_dyn_i,self.Pi,dt=dt)
+    we = self.int_w(self.we,t,self.ve,self.ae,self.be,self.tau_we,volt_dyn_e[0],self.ELe,dt=dt)
+    wi = self.int_w(self.wi,t,self.vi,self.ai,self.bi,self.tau_wi,volt_dyn_i[0],self.ELi,dt=dt)
 
     self.ve.value = ve
     self.vi.value = vi
-    self.W.value = W  
+    self.we.value = we
+    self.wi.value = wi
   
 if __name__=='__main__':
-  t_stop = 2e-1
+  t_stop = 2e3
 
-  mean_net = MeanField()
-  mean_run = bp.DSRunner(mean_net, monitors=['ve','vi'])
+  # mean_net = MeanField()
+  # mean_run = bp.DSRunner(mean_net, monitors=['ve','vi'])
 
-  _=mean_run.run(t_stop)
-  ve = mean_run.mon['ve']
-  vi = mean_run.mon['vi']
-  plt.plot(ve)
-  plt.plot(vi)
-  plt.show()
-  # net = SNN()
-
-  # snn_run = bp.DSRunner(net, monitors=['lfp','E.spike','I.spike'])
-
-  # _=snn_run.run(t_stop)
-
-  # observation = snn_run.mon['lfp']
-
-  # obs = observation#+np.random.normal(0,50,size=observation.shape)
-
-  # plt.plot(obs)
-  # # plt.scatter(*snn_run.mon['E.spike'].nonzero(),marker='|')
-  # # plt.scatter(*snn_run.mon['I.spike'].nonzero(),marker='|')
+  # _=mean_run.run(t_stop)
+  # ve = mean_run.mon['ve']
+  # vi = mean_run.mon['vi']
+  # plt.plot(ve)
+  # plt.plot(vi)
   # plt.show()
+  net = SNN()
+
+  snn_run = bp.DSRunner(net, monitors=['lfp','E.spike','I.spike'])
+
+  _=snn_run.run(t_stop)
+
+  observation = snn_run.mon['lfp']
+
+  obs = observation#+np.random.normal(0,50,size=observation.shape)
+
+  plt.plot(obs)
+  plt.scatter(*snn_run.mon['E.spike'].nonzero(),marker='|')
+  plt.scatter(*snn_run.mon['I.spike'].nonzero(),marker='|')
+  plt.show()

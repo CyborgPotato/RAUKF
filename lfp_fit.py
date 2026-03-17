@@ -29,7 +29,7 @@ class Exponential(bp.Projection):
     )
 
 class EINet(bp.DynamicalSystem):
-  def __init__(self, noise=True, N=1000, b=0.8, c=0.1):
+  def __init__(self, noise=True, N=100, b=0.8, c=0.1):
     super().__init__()
     self.noise = noise
     self.b = b
@@ -136,7 +136,7 @@ def run_with_Q_R(params, inp=0, obs=0):
     np.mean(np.isnan(kf_lfp-obs)*1e9)
 
 if __name__=='__main__':
-  t_stop = 100e3
+  t_stop = 10e3
   dbs_times = np.arange(2500,8000,20)
 
   net = EINet()
@@ -209,12 +209,12 @@ if __name__=='__main__':
 
   # net_kf.x.value = net_kf.x.at[1].set(11)
 
-  lfp_Q = 1e0
+  lfp_Q = 1e-9
   # inp_Q = 1e16
   we_Q = 1e-3
-  wi_Q = 1e-1
+  wi_Q = 1e-3
   # net_kf.x.value = net_kf.x.at[1].set(net_kf.x.value[1]*1)
-  net_kf.x.value = net_kf.x.at[-4:].set(net_kf.x.value[-4:]*0.1)
+  net_kf.x.value = net_kf.x.at[-4:].set(net_kf.x.value[-4:]*1)
   net_kf.Q.value = np.diag(np.array([
     lfp_Q,
     # inp_Q,
@@ -234,8 +234,8 @@ if __name__=='__main__':
 
   net_kf.R.value = net_kf.R.at[:].set(1e-10)
 
-  net_kf.resample = False
-  net_kf.adjust_every = 10
+  net_kf.resample = True
+  net_kf.adjust_every = 0
   
   net_kf.robust_after = 0
   net_kf.robust = False

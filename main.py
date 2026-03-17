@@ -274,8 +274,9 @@ class RAUKF(bp.DynamicalSystem):
     ) for k in chain(self.x0,self.p0)])
       
     self.net.load_state_dict(state_dict)
-    self.set_x(state_dict,self.x)
+    self.set_x(state_dict,self.x*apply_kf + (1-apply_kf)*old_x)
     self.net()
+    state_dict = self.net.state_dict()
     self.obs_i.value += 1
     return xhat
 
@@ -303,7 +304,7 @@ if __name__=='__main__':
     ],
     observation
   )
-  net_kf.adjust_every = 1
+  net_kf.adjust_every = 0
   net_kf.Q.value = np.diag(np.array([
       1e-6,
       1e-10,
