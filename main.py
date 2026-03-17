@@ -108,6 +108,7 @@ class RAUKF(bp.DynamicalSystem):
     self._p = {k:np.array(self.x_vals[k]) for k in self.p0}
     x = np.concatenate(list(self._x.values())+list(self._p.values()))
 
+    self._T = 1
     self.t_stab = 0
     self.adjust_every = 0
     self.last_adjust = bm.Variable(1)
@@ -117,6 +118,7 @@ class RAUKF(bp.DynamicalSystem):
     self.Q = bm.Variable((self.x.size,self.x.size))
     self.obs = bm.array(observation)
     self.obs_i = bm.Variable(1,dtype=int)
+    self.obs_i.value = self.obs_i.at[:].set(self._T)
     obs_size = observation.shape[1]
     self.R = bm.Variable((obs_size,obs_size))
     bm.fill_diagonal(self.P,np.array([1e-3]*self.x.size))
@@ -134,6 +136,15 @@ class RAUKF(bp.DynamicalSystem):
     self.delta0 = 0.2
     self.a = 5
     self.b = 5
+
+  @property
+  def T(self):
+    return self._T
+
+  @T.setter
+  def T(self, T):
+    self._T = T
+    self.obs_i.value = self.obs_i.at[:].set(self._T)
 
   def unscented_transform(self,x,P):
     N = x.size
@@ -167,7 +178,8 @@ class RAUKF(bp.DynamicalSystem):
       sigmapoint_dict = dict(state_dict)
       self.net.load_state_dict(state_dict)
       self.set_x(sigmapoint_dict,z)
-      self.net()
+      for _ in range(self.T):
+        self.net()
       res_dict = self.net.state_dict()
       sig_x = bm.concatenate([dict_get(
         res_dict,self.x_map[k]
@@ -275,9 +287,10 @@ class RAUKF(bp.DynamicalSystem):
       
     self.net.load_state_dict(state_dict)
     self.set_x(state_dict,self.x*apply_kf + (1-apply_kf)*old_x)
-    self.net()
+    for _ in range(self.T):
+      self.net()
     state_dict = self.net.state_dict()
-    self.obs_i.value += 1
+    self.obs_i.value += self.T
     return xhat
 
 if __name__=='__main__':
@@ -288,6 +301,7 @@ if __name__=='__main__':
   _=runner.run(t_sim)
 
   observation = np.c_[runner.mon['pops.x']]#,runner.mon['pops.y']]
+  ts = runner.mon['ts']
 
   net_kf = RAUKF(
     RateNet(1,None,False),
@@ -305,21 +319,23 @@ if __name__=='__main__':
     observation
   )
   net_kf.adjust_every = 0
+  net_kf.x.value = net_kf.x.at[2].set(0.1)
   net_kf.Q.value = np.diag(np.array([
-      1e-6,
       1e-10,
-      1e-3,
+      1e-10,
+      1e-6,
   ],dtype=np.float32))
   net_kf.P.value = np.diag(np.array([
-      1e-6,
       1e-10,
-      1e-3,
+      1e-10,
+      1e-6,
   ],dtype=np.float32))
 
   net_kf.R.value = np.diag(np.array([
       1e-10,
       # 1e-10,
   ],dtype=np.float32))
+
   net_kf.robust = False
   net_kf.lambda0 = 0.2
   net_kf.delta0 = 0.2
@@ -327,18 +343,20 @@ if __name__=='__main__':
   net_kf.b = 5
   net_kf.threshold = .45
 
+  net_kf.T = 50
+  
   # net_kf.x = net_kf.x.at[-1].set(3)
   
   runner = bp.DSRunner(net_kf, monitors=['net.pops.x','net.pops.y','P','net.global_input','R','phi'])
-  _=runner.run(t_sim)
+  _=runner.run(t_sim/net_kf.T)
+  kf_ts = runner.mon['ts']*net_kf.T
 
-  plt.plot(observation)
-  plt.plot(runner.mon['net.pops.x'])
+  plt.plot(ts,observation)
+  plt.plot(kf_ts,runner.mon['net.pops.x'])
   # plt.plot(runner.mon['net.pops.y'])
   plt.twinx()
-  ts = runner.mon['ts']
-  plt.plot(sys_input(ts),color='r')
-  plt.plot(runner.mon['net.global_input'],color='k')
+  plt.plot(ts,sys_input(ts),color='r')
+  plt.plot(kf_ts,runner.mon['net.global_input'],color='k')
   # plt.twinx()
   # plt.plot(runner.mon['R'][:,0,0],color='g')
   # plt.twinx()
