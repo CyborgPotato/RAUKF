@@ -136,7 +136,7 @@ class RAUKF(bp.DynamicalSystem):
     self.delta0 = 0.2
     self.a = 5
     self.b = 5
-
+    
   @property
   def T(self):
     return self._T
@@ -146,6 +146,10 @@ class RAUKF(bp.DynamicalSystem):
     self._T = T
     self.obs_i.value = self.obs_i.at[:].set(self._T)
 
+  def net_forward(self,t):
+    bp.share['t'] = t
+    self.net()
+    
   def unscented_transform(self,x,P):
     N = x.size
     P = (P + P.T) / 2.0
@@ -178,8 +182,11 @@ class RAUKF(bp.DynamicalSystem):
       sigmapoint_dict = dict(state_dict)
       self.net.load_state_dict(state_dict)
       self.set_x(sigmapoint_dict,z)
-      for _ in range(self.T):
-        self.net()
+      __t = bp.share['t']
+      __dt = bp.share['dt']
+      __ts = __t + bm.linspace(0,1,1)*__dt
+      bp.math.for_loop(self.net_forward,__ts)
+      bp.share['t'] = __t
       res_dict = self.net.state_dict()
       sig_x = bm.concatenate([dict_get(
         res_dict,self.x_map[k]
@@ -287,8 +294,11 @@ class RAUKF(bp.DynamicalSystem):
       
     self.net.load_state_dict(state_dict)
     self.set_x(state_dict,self.x*apply_kf + (1-apply_kf)*old_x)
-    for _ in range(self.T):
-      self.net()
+    __t = bp.share['t']
+    __dt = bp.share['dt']
+    __ts = __t + bm.linspace(0,1,1)*__dt
+    bp.math.for_loop(self.net_forward,__ts)
+    bp.share['t'] = __t
     state_dict = self.net.state_dict()
     self.obs_i.value += self.T
     return xhat
@@ -343,11 +353,11 @@ if __name__=='__main__':
   net_kf.b = 5
   net_kf.threshold = .45
 
-  net_kf.T = 50
+  net_kf.T = 10
   
   # net_kf.x = net_kf.x.at[-1].set(3)
   
-  runner = bp.DSRunner(net_kf, monitors=['net.pops.x','net.pops.y','P','net.global_input','R','phi'])
+  runner = bp.DSRunner(net_kf, monitors=['net.pops.x','net.pops.y','P','net.global_input','R','phi'],jit={'predict': True, 'fit': False})
   _=runner.run(t_sim/net_kf.T)
   kf_ts = runner.mon['ts']*net_kf.T
 
