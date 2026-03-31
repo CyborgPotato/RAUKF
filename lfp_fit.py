@@ -76,6 +76,8 @@ class EINet(bp.DynamicalSystem):
     
     self.lfp_trace = bm.Variable(100,batch_axis=0)
     self.lfp = bm.Variable(1,batch_axis=0)
+    self.lfp_max = bm.Variable(1,batch_axis=0)
+    self.lfp_min = bm.Variable(1,batch_axis=0)
     self.calc_lfp()
 
   def calc_lfp(self):
@@ -91,6 +93,12 @@ class EINet(bp.DynamicalSystem):
     )
     self.lfp.value = self.lfp.at[:].set(
       self.lfp_trace.mean()
+    )
+    self.lfp_max.value = self.lfp.at[:].set(
+      self.lfp_trace.max()
+    )
+    self.lfp_min.value = self.lfp.at[:].set(
+      self.lfp_trace.min()
     )
 
   def update(self):
@@ -116,13 +124,18 @@ reload(dbs_)
 from dbs import DBS
 
 if __name__=='__main__':
-  t_stop = 100e3
+  t_stop = 10e3
   dbs_times = np.array([0])#np.arange(2500,8000,10)
 
   net = EINet()
   # net = DBS(net_,[net_.E],dbs_times,0.05,0.05)
 
-  runner = bp.DSRunner(net, monitors=['lfp','I.spike','E.spike'])
+  runner = bp.DSRunner(
+    net,
+    monitors=[
+      'lfp','lfp_max','lfp_min',
+      'I.spike','E.spike'
+    ])
 
   _=runner.run(t_stop)
 
@@ -131,6 +144,7 @@ if __name__=='__main__':
   ts = runner.mon['ts']
 
   obs = observation#+np.random.normal(0,50,size=observation.shape)
+  obs = np.c_[runner.mon['lfp'],runner.mon['lfp_max'],runner.mon['lfp_min']]
   # plt.plot(ts,obs)
   # # plt.twinx()
   # # plt.plot(input,color='r')
@@ -157,11 +171,13 @@ if __name__=='__main__':
     ],
     [ # What our measurement/observation is
       r'.*lfp$',
+      r'.*lfp_max$',
+      r'.*lfp_min$',
     ],
     obs
   )
   net_kf.T = 1
-  net_kf.t_stab = 500/net_kf.T
+  net_kf.t_stab = 100/net_kf.T
   net_kf.resample = True
   net_kf.adjust_every = 0
 
@@ -180,7 +196,7 @@ if __name__=='__main__':
   we_Q = .25e-10 + 0.125e-10
   wi_Q = .25e-10 + 0.125e-10
   # net_kf.x.value = net_kf.x.at[1].set(net_kf.x.value[1]*1)
-  net_kf.x.value = net_kf.x.at[-2:].set(net_kf.x.value[-2:]*0.5)
+  net_kf.x.value = net_kf.x.at[-2:].set(net_kf.x.value[-2:]*5)
   net_kf.Q.value = np.diag(np.array([
     # lfp_Q,
     # inp_Q,
@@ -194,7 +210,9 @@ if __name__=='__main__':
     wi_Q,
   ],dtype=np.float32))
 
-  net_kf.R.value = net_kf.R.at[:].set(0.01)
+  net_kf.R.value = net_kf.R.at[0,0].set(0.01)
+  net_kf.R.value = net_kf.R.at[1,1].set(0.01)
+  net_kf.R.value = net_kf.R.at[2,2].set(0.01)
   
   net_kf.robust_after = 0
   net_kf.robust = False

@@ -206,6 +206,7 @@ class RAUKF(bp.DynamicalSystem):
     state_dict = self.net.state_dict()
     z_ = self.unscented_transform(self.x,self.P)
     z_x,z_y,alphas = self.sample_points(state_dict, z_)
+    # jax.debug.print('{x}',x=z_x)
     new_x = z_x.T @ alphas
     x_cov = z_x - new_x.T
     new_P = (alphas * x_cov.T)@x_cov + self.Q
@@ -353,7 +354,7 @@ if __name__=='__main__':
   net_kf.b = 5
   net_kf.threshold = .45
 
-  net_kf.T = 10
+  net_kf.T = 100
   
   # net_kf.x = net_kf.x.at[-1].set(3)
   
