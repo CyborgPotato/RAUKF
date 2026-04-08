@@ -138,12 +138,12 @@ from dbs import DBS
 
 def fit_lfp_obs(
     obs=0,t_stop=0,b=0.8,c=0.05,T=1,t_stab=0,progress=False,
-    Je_scale=1,Ji_scale=1,
+    Je_scale=1,Ji_scale=1,dbs_times=[0],
 ):
   net_kf_ = EINet(b=b,c=c)
   net_kf = RAUKF(
-    net_kf_,
-    # DBS(net_kf_,[net_kf_.E],dbs_times,0.05,0.05),
+    # net_kf_,
+    DBS(net_kf_,[net_kf_.E],dbs_times,0.1,0.1),
     [ # What internal states to track
       # r'.*lfp$',
     ],
@@ -179,8 +179,8 @@ def fit_lfp_obs(
 
   # lfp_Q = 1e-2
   # inp_Q = 1e-15
-  we_Q = .25e-10 + 0.125e-10
-  wi_Q = .25e-10 + 0.125e-10
+  we_Q = 1e-12*2*2#.25e-10 + 0.125e-10
+  wi_Q = 1e-12*2*2#.25e-10 + 0.125e-10
   # net_kf.x.value = net_kf.x.at[1].set(net_kf.x.value[1]*1)
   net_kf.x.value = net_kf.x.at[-4].set(net_kf.x.value[-4]*Je_scale)
   net_kf.x.value = net_kf.x.at[-3].set(net_kf.x.value[-3]*Je_scale)
@@ -209,11 +209,11 @@ def fit_lfp_obs(
 
   kf_run = bp.DSRunner(
     net_kf, monitors=[
-      'net.lfp',
-      'net.Jee',
-      'net.Je',
-      'net.Jii',
-      'net.Ji',
+      'net.net.lfp',
+      'net.net.Jee',
+      'net.net.Je',
+      'net.net.Jii',
+      'net.net.Ji',
       'P',
       'phi',
     ],
@@ -222,7 +222,11 @@ def fit_lfp_obs(
 
   _=kf_run.run(t_stop/net_kf.T)
   return kf_run
-  
+
+tmp = fit_lfp_obs(obs=obses[0],t_stop=t_stop,progress=True,Je_scale=0.5,Ji_scale=0.5,b=b_range[0],dbs_times=dbs_times)
+
+plt.plot(ts,tmp.mon['net.net.Je'],color='b');plt.plot(ts,tmp.mon['net.net.Jee'],color='b',linestyle='--');plt.plot(ts,tmp.mon['net.net.Ji'],color='m');plt.plot(ts,tmp.mon['net.net.Jii'],color='m',linestyle='--');plt.hlines(net.net.Je,0,ts.max(),color='r');plt.hlines(net.net.Ji,0,ts.max(),color='g');plt.show()
+
 def rmse(a,tgt):
   return np.sqrt(np.mean(np.square(a-tgt)))
 
@@ -231,30 +235,30 @@ if __name__=='__main__':
   # c_range = np.linspace(0,1,11)[1:-1]
   
   t_stop = 10e3
-  dbs_times = np.array([0])#np.arange(2500,8000,10)
+  dbs_times = np.arange(2500,8000,10)
 
   obses = []
 
   b_range = np.array([0.8])
 
   for b in b_range:
-    net = EINet(b=b)
-    # net = DBS(net_,[net_.E],dbs_times,0.05,0.05)
+    net_ = EINet(b=b)
+    net = DBS(net_,[net_.E],dbs_times,0.1,0.1)
 
     runner = bp.DSRunner(
       net,
       monitors=[
-        'lfp','lfp_max','lfp_min',
-        'I.spike','E.spike'
+        'net.lfp','net.lfp_max','net.lfp_min',
+        'net.I.spike','net.E.spike'
       ],
     )
 
     _=runner.run(t_stop)
 
-    observation = runner.mon['lfp']
+    observation = runner.mon['net.lfp']
     ts = runner.mon['ts']
 
-    obs = np.c_[runner.mon['lfp'],runner.mon['lfp_max'],runner.mon['lfp_min']]
+    obs = np.c_[runner.mon['net.lfp'],runner.mon['net.lfp_max'],runner.mon['net.lfp_min']]
     obses.append(obs)
 
   from multiprocess import get_context
