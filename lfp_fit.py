@@ -13,6 +13,8 @@ jax.config.update("jax_logging_level", 'CRITICAL')
 
 import matplotlib.pyplot as plt
 
+import pandas as pd
+
 class Exponential(bp.Projection):
   def __init__(self, pre, post, delay, prob, g_max, tau, E):
     super().__init__()
@@ -128,37 +130,46 @@ class EINet(bp.DynamicalSystem):
     self.I(self.NI())
     return self.E.spike.value, self.I.spike.value
 
-import main as main_
-from importlib import reload
-reload(main_)
+# import main as main_
+# from importlib import reload
+# reload(main_)
 from main import RAUKF, Ukf
-import dbs as dbs_
-reload(dbs_)
+# import dbs as dbs_
+# reload(dbs_)
 from dbs import DBS
+import gc
+# gc.set_debug(gc.DEBUG_LEAK)
 
 def fit_lfp_obs(
     obs=0,t_stop=0,b=0.8,c=0.05,T=1,t_stab=0,progress=False,
-    Je_scale=1,Ji_scale=1,dbs_times=[0],
+    Je_scale=1,Ji_scale=1,dbs_times=np.zeros(1),
+    justEI=True, R_obs=["lfp_max","lfp_min"],
 ):
-  net_kf_ = EINet(b=b,c=c)
-  net_kf = RAUKF(
-    # net_kf_,
-    DBS(net_kf_,[net_kf_.E],dbs_times,0.1,0.1),
-    [ # What internal states to track
-      # r'.*lfp$',
-    ],
-    [ # What states to estimate
-      # r'.*input$',
-      # r'.*Einput$',
+  if justEI:
+    states = [
+      r'.*Je$',
+      r'.*Ji$',
+    ]
+  else:
+    states = [
       r'.*Je$',
       r'.*Jee$',
       r'.*Ji$',
       r'.*Jii$',
+    ]
+
+  net_kf_ = EINet(b=b,c=c)
+  net_kf = RAUKF(
+    net_kf_,
+    # DBS(net_kf_,[net_kf_.E],dbs_times,0.1,0.1),
+    [ # What internal states to track
+      # r'.*lfp$',
     ],
+    # What states to estimate
+    states
+    ,
     [ # What our measurement/observation is
-      r'.*lfp$',
-      r'.*lfp_max$',
-      r'.*lfp_min$',
+      fr'.*{R}$' for R in R_obs
     ],
     obs
   )
@@ -177,43 +188,51 @@ def fit_lfp_obs(
 
   # net_kf.x.value = net_kf.x.at[1].set(11)
 
-  # lfp_Q = 1e-2
-  # inp_Q = 1e-15
-  we_Q = 1e-12*2*2#.25e-10 + 0.125e-10
-  wi_Q = 1e-12*2*2#.25e-10 + 0.125e-10
-  # net_kf.x.value = net_kf.x.at[1].set(net_kf.x.value[1]*1)
-  net_kf.x.value = net_kf.x.at[-4].set(net_kf.x.value[-4]*Je_scale)
-  net_kf.x.value = net_kf.x.at[-3].set(net_kf.x.value[-3]*Je_scale)
-  net_kf.x.value = net_kf.x.at[-2].set(net_kf.x.value[-2]*Ji_scale)
-  net_kf.x.value = net_kf.x.at[-1].set(net_kf.x.value[-1]*Ji_scale)
-  net_kf.Q.value = np.diag(np.array([
-    # lfp_Q,
-    # inp_Q,
-    we_Q,
-    we_Q,
-    wi_Q,
-    wi_Q,
-  ],dtype=np.float32))
-  net_kf.P.value = np.diag(np.array([
-    # lfp_Q,
-    # inp_Q,
-    we_Q,
-    we_Q,
-    wi_Q,
-    wi_Q,
-  ],dtype=np.float32))
+  we_Q = 1e-12*2*2*2#.25e-10 + 0.125e-10
+  wi_Q = 1e-12*2*2*2#.25e-10 + 0.125e-10
+  if justEI:
+    net_kf.x.value = net_kf.x.at[-2].set(net_kf.x.value[-2]*Je_scale)
+    net_kf.x.value = net_kf.x.at[-1].set(net_kf.x.value[-1]*Ji_scale)
+  else:
+    net_kf.x.value = net_kf.x.at[-4].set(net_kf.x.value[-4]*Je_scale)
+    net_kf.x.value = net_kf.x.at[-3].set(net_kf.x.value[-3]*Je_scale)
+    net_kf.x.value = net_kf.x.at[-2].set(net_kf.x.value[-2]*Ji_scale)
+    net_kf.x.value = net_kf.x.at[-1].set(net_kf.x.value[-1]*Ji_scale)    
+  if justEI:
+    net_kf.Q.value = np.diag(np.array([
+      we_Q,
+      wi_Q,
+    ],dtype=np.float32))
+    net_kf.P.value = np.diag(np.array([
+      we_Q,
+      wi_Q,
+    ],dtype=np.float32))
+  else:
+    net_kf.Q.value = np.diag(np.array([
+      we_Q,
+      we_Q,
+      wi_Q,
+      wi_Q,
+    ],dtype=np.float32))
+    net_kf.P.value = np.diag(np.array([
+      we_Q,
+      we_Q,
+      wi_Q,
+      wi_Q,
+    ],dtype=np.float32))
 
-  net_kf.R.value = net_kf.R.at[0,0].set(0.01)
-  net_kf.R.value = net_kf.R.at[1,1].set(0.01)
-  net_kf.R.value = net_kf.R.at[2,2].set(0.01)
+  for i in range(len(R_obs)):
+    net_kf.R.value = net_kf.R.at[i,i].set(0.01)
 
   kf_run = bp.DSRunner(
     net_kf, monitors=[
-      'net.net.lfp',
-      'net.net.Jee',
-      'net.net.Je',
-      'net.net.Jii',
-      'net.net.Ji',
+      'net.lfp',
+      'net.lfp_max',
+      'net.lfp_min',
+      'net.Jee',
+      'net.Je',
+      'net.Jii',
+      'net.Ji',
       'P',
       'phi',
     ],
@@ -223,82 +242,115 @@ def fit_lfp_obs(
   _=kf_run.run(t_stop/net_kf.T)
   return kf_run
 
-tmp = fit_lfp_obs(obs=obses[0],t_stop=t_stop,progress=True,Je_scale=0.5,Ji_scale=0.5,b=b_range[0],dbs_times=dbs_times)
-
-plt.plot(ts,tmp.mon['net.net.Je'],color='b');plt.plot(ts,tmp.mon['net.net.Jee'],color='b',linestyle='--');plt.plot(ts,tmp.mon['net.net.Ji'],color='m');plt.plot(ts,tmp.mon['net.net.Jii'],color='m',linestyle='--');plt.hlines(net.net.Je,0,ts.max(),color='r');plt.hlines(net.net.Ji,0,ts.max(),color='g');plt.show()
-
 def rmse(a,tgt):
   return np.sqrt(np.mean(np.square(a-tgt)))
 
+import inspect
+from functools import lru_cache
+from hashlib import sha512
+
+class HashDict(dict):
+  def __hash__(self):
+    return hash(",".join(f"{k}:{v}" for k,v in self.items()))
+class HashArr(np.ndarray):
+  def __new__(self,arr):
+    return np.ndarray(arr.shape,buffer=arr,dtype=arr.dtype).view(HashArr)
+  def __hash__(self):
+    return hash(sha512(bytes(self)).digest())
+class HashList(list):
+  def __hash__(self):
+    return hash(",".join(f'{v}' for v in self))
+
+default_kf_args = inspect.getfullargspec(fit_lfp_obs)
+default_kf_args = {
+  k:v for k,v in zip(default_kf_args.args,default_kf_args.defaults)
+}
+default_ei_args = inspect.getfullargspec(EINet)
+default_ei_args = {
+  k:v for k,v in zip(default_ei_args.args[1:],default_ei_args.defaults)
+}
+
+@lru_cache(4)
+def generate_obs(ei_args,t_stop=0,dbs_times=np.zeros(1),R_obs=['lfp']):
+  net = EINet(**ei_args)
+  # net = DBS(net_,[net_.E],dbs_times,0.1,0.1)
+
+  runner = bp.DSRunner(
+    net,
+    monitors=[f'{R}' for R in R_obs],
+    progress_bar=False
+  )
+
+  _=runner.run(t_stop)
+
+  ts = runner.mon['ts']
+  obs = np.c_[*[runner.mon[f'{R}'] for R in R_obs]]
+  return ts,obs,net
+
+def run(args):
+  kf_args, ei_args = args
+  for k in default_kf_args.keys():
+    if not k in kf_args:
+      kf_args[k] = default_kf_args[k]
+  for k in default_ei_args.keys():
+    if not k in ei_args:
+      ei_args[k] = default_ei_args[k]
+
+  t_stop = kf_args['t_stop']
+  dbs_times = kf_args['dbs_times']
+  R_obs = kf_args['R_obs']
+      
+  ts,obs,net = generate_obs(HashDict(ei_args),t_stop,HashArr(dbs_times),HashList(R_obs))
+
+  index_dict = dict(kf_args)
+  index_dict.update({f'sim_{k}':v for k,v in ei_args.items()})
+
+  kf_args['obs'] = obs
+  kf_run = fit_lfp_obs(**kf_args)
+
+  index_dict['RMSE_Je'] = rmse(kf_run.mon['net.Je'],net.Je)
+  index_dict['RMSE_Jee'] = rmse(kf_run.mon['net.Jee'],net.Jee)
+  index_dict['RMSE_Ji'] = rmse(kf_run.mon['net.Ji'],net.Ji)
+  index_dict['RMSE_Jii'] = rmse(kf_run.mon['net.Jii'],net.Jii)
+
+  return pd.DataFrame.from_dict(index_dict,'index').T
+
+from itertools import product, tee
+
+def dictProduct(**kwargs):
+  ks = kwargs.keys()
+  for vs in product(*kwargs.values()):
+    yield dict(zip(ks,vs))
+
 if __name__=='__main__':
-  b_range = np.linspace(0,1,11)[1:-1]
-  # c_range = np.linspace(0,1,11)[1:-1]
-  
-  t_stop = 10e3
-  dbs_times = np.arange(2500,8000,10)
-
-  obses = []
-
-  b_range = np.array([0.8])
-
-  for b in b_range:
-    net_ = EINet(b=b)
-    net = DBS(net_,[net_.E],dbs_times,0.1,0.1)
-
-    runner = bp.DSRunner(
-      net,
-      monitors=[
-        'net.lfp','net.lfp_max','net.lfp_min',
-        'net.I.spike','net.E.spike'
-      ],
-    )
-
-    _=runner.run(t_stop)
-
-    observation = runner.mon['net.lfp']
-    ts = runner.mon['ts']
-
-    obs = np.c_[runner.mon['net.lfp'],runner.mon['net.lfp_max'],runner.mon['net.lfp_min']]
-    obses.append(obs)
-
   from multiprocess import get_context
   from tqdm import tqdm
-  from itertools import product, combinations
-  from functools import partial
-  ctx = get_context('spawn')
-  
-  kf_T = 1
-  t_stab = 100
+  ctx = get_context('forkserver')
+
+  kf_arg_ranges = {
+    't_stop': [100],
+    'b': np.linspace(0,1,11)[1:-1],
+    # 'Je_scale': [1,0.1],
+    # 'Ji_scale': [1,0.1],
+    # 'justEI': [False,True],
+  }
+
+  ei_arg_ranges = {
+    'b': np.linspace(0,1,11)[1:-1],
+  }
+
+  kf_args = dictProduct(**kf_arg_ranges)
+  ei_args = dictProduct(**ei_arg_ranges)
+  args = product(kf_args,ei_args)
+  args, _args = tee(args)
+  n_sim = sum(1 for _ in _args)
 
   with ctx.Pool(8) as p:
-    _init_scales = np.logspace(-3,3,13,base=2)
-    init_scales = list(product(*[_init_scales]*2))
+    runs = p.imap(run,args,chunksize=max(1,1))
+    results = pd.concat(tqdm(runs,total=n_sim),ignore_index=True)
 
-    obs_idxs = np.arange(b_range.size)
-    init_scales = [[1,1]+list(x) for x in product(b_range,obs_idxs)]
-
-    def __run(params,Je=0,Ji=0,obses=[],**kwargs):
-      Je_scale,Ji_scale,b,obs_idx = params
-      obs = obses[obs_idx]
-      kf_run = fit_lfp_obs(
-        Je_scale=Je_scale,Ji_scale=Ji_scale,obs=obs,b=b,
-        **kwargs,
-      )
-      Je_rmse = rmse(kf_run.mon['net.Je'],Je)
-      Ji_rmse = rmse(kf_run.mon['net.Ji'],Ji)
-      return Je_rmse, Ji_rmse
-    run = partial(
-      __run,obses=obses,t_stop=t_stop,T=kf_T,t_stab=t_stab,
-      Je=net.Je.value,Ji=net.Ji.value,
-    )
-
-    n_sim = len(init_scales)
-    runs = p.imap(run,init_scales,chunksize=max(1,n_sim//8//4))
-    rmses = list(tqdm(runs,total=n_sim))
-  rmses = np.array(rmses)
-  init_scales = np.array(init_scales)
-  np.savez('rmse_dat_off_model.npz',rmses=rmses,args=init_scales)
-
+  results.to_csv('./raukf_sweep.csv')
+    
   # kf_lfp = kf_run.mon['net.lfp']
   # # kf_input = kf_run.mon['net.Einput']
   # kf_ts = kf_run.mon['ts']*kf_T
