@@ -15,6 +15,12 @@ import matplotlib.pyplot as plt
 
 import pandas as pd
 
+from joblib import Memory
+memory = Memory('sweep_cache',verbose=0)
+
+from multiprocessing import get_context
+from tqdm import tqdm
+
 class Exponential(bp.Projection):
   def __init__(self, pre, post, delay, prob, g_max, tau, E):
     super().__init__()
@@ -143,7 +149,8 @@ import gc
 def fit_lfp_obs(
     obs=0,t_stop=0,b=0.8,c=0.05,T=1,t_stab=0,progress=False,
     Je_scale=1,Ji_scale=1,dbs_times=np.zeros(1),
-    justEI=True, R_obs=["lfp_max","lfp_min"],
+    dbs_tgts='E', dbs_pct_aff=0.1, dbs_pct_eff=0.1,
+    justEI=True, R_obs=["lfp_max","lfp_min"],index=0
 ):
   if justEI:
     states = [
@@ -158,10 +165,19 @@ def fit_lfp_obs(
       r'.*Jii$',
     ]
 
+    
   net_kf_ = EINet(b=b,c=c)
+
+  if dbs_tgts=='E':
+    dbs_tgt=[net_kf_.E]
+  elif dbs_tgts=='I':
+    dbs_tgt=[net_kf_.I]
+  elif dbs_tgts=='EI':
+    dbs_tgt=[net_kf_.E,net_kf_.I]
+    
   net_kf = RAUKF(
-    net_kf_,
-    # DBS(net_kf_,[net_kf_.E],dbs_times,0.1,0.1),
+    # net_kf_,
+    DBS(net_kf_,dbs_tgt,dbs_times,dbs_pct_aff,dbs_pct_eff),
     [ # What internal states to track
       # r'.*lfp$',
     ],
@@ -226,13 +242,13 @@ def fit_lfp_obs(
 
   kf_run = bp.DSRunner(
     net_kf, monitors=[
-      'net.lfp',
-      'net.lfp_max',
-      'net.lfp_min',
-      'net.Jee',
-      'net.Je',
-      'net.Jii',
-      'net.Ji',
+      'net.net.lfp',
+      'net.net.lfp_max',
+      'net.net.lfp_min',
+      'net.net.Jee',
+      'net.net.Je',
+      'net.net.Jii',
+      'net.net.Ji',
       'P',
       'phi',
     ],
@@ -270,24 +286,45 @@ default_ei_args = {
   k:v for k,v in zip(default_ei_args.args[1:],default_ei_args.defaults)
 }
 
-@lru_cache(4)
-def generate_obs(ei_args,t_stop=0,dbs_times=np.zeros(1),R_obs=['lfp']):
-  net = EINet(**ei_args)
-  # net = DBS(net_,[net_.E],dbs_times,0.1,0.1)
+@memory.cache
+def generate_obs(
+    ei_args,t_stop=0,
+    dbs_times=np.zeros(1),
+    dbs_tgts='E', dbs_pct_aff=0.1, dbs_pct_eff=0.1,
+    R_obs=['lfp'],index=0
+):
+  net_ = EINet(**ei_args)
+  if dbs_tgts=='E':
+    dbs_tgt=[net_.E]
+  elif dbs_tgts=='I':
+    dbs_tgt=[net_.I]
+  elif dbs_tgts=='EI':
+    dbs_tgt=[net_.E,net_.I]
+  net = DBS(net_,dbs_tgt,dbs_times,dbs_pct_aff,dbs_pct_eff)
 
   runner = bp.DSRunner(
     net,
-    monitors=[f'{R}' for R in R_obs],
+    monitors=[f'net.{R}' for R in R_obs],
     progress_bar=False
   )
 
   _=runner.run(t_stop)
 
   ts = runner.mon['ts']
-  obs = np.c_[*[runner.mon[f'{R}'] for R in R_obs]]
-  return ts,obs,net
+  obs = np.c_[*[runner.mon[f'net.{R}'] for R in R_obs]]
+  # Can't return net directly, only values of (breaks cache)
+  return ts,obs,(
+    net.net.Je.value,
+    net.net.Jee.value,
+    net.net.Ji.value,
+    net.net.Jii.value
+  )
 
 def run(args):
+  return _run(args)
+
+@memory.cache
+def _run(args):
   kf_args, ei_args = args
   for k in default_kf_args.keys():
     if not k in kf_args:
@@ -296,11 +333,23 @@ def run(args):
     if not k in ei_args:
       ei_args[k] = default_ei_args[k]
 
-  t_stop = kf_args['t_stop']
-  dbs_times = kf_args['dbs_times']
-  R_obs = kf_args['R_obs']
+  t_stop      = kf_args['t_stop']
+  dbs_times   = kf_args['dbs_times']
+  dbs_tgts    = kf_args['dbs_tgts']
+  dbs_pct_aff = kf_args['dbs_pct_aff']
+  dbs_pct_eff = kf_args['dbs_pct_eff']
+  R_obs       = kf_args['R_obs']
+
+  index       = ei_args.pop('index')
       
-  ts,obs,net = generate_obs(HashDict(ei_args),t_stop,HashArr(dbs_times),HashList(R_obs))
+  ts,obs,(rJe,rJee,rJi,rJii) = generate_obs(
+    ei_args,
+    t_stop,
+    dbs_times,
+    dbs_tgts,dbs_pct_aff,dbs_pct_eff,
+    R_obs,
+    index,
+  )
 
   index_dict = dict(kf_args)
   index_dict.update({f'sim_{k}':v for k,v in ei_args.items()})
@@ -308,14 +357,14 @@ def run(args):
   kf_args['obs'] = obs
   kf_run = fit_lfp_obs(**kf_args)
 
-  index_dict['RMSE_Je'] = rmse(kf_run.mon['net.Je'],net.Je)
-  index_dict['RMSE_Jee'] = rmse(kf_run.mon['net.Jee'],net.Jee)
-  index_dict['RMSE_Ji'] = rmse(kf_run.mon['net.Ji'],net.Ji)
-  index_dict['RMSE_Jii'] = rmse(kf_run.mon['net.Jii'],net.Jii)
+  index_dict['RMSE_Je'] = rmse(kf_run.mon['net.net.Je'],rJe)
+  index_dict['RMSE_Jee'] = rmse(kf_run.mon['net.net.Jee'],rJee)
+  index_dict['RMSE_Ji'] = rmse(kf_run.mon['net.net.Ji'],rJi)
+  index_dict['RMSE_Jii'] = rmse(kf_run.mon['net.net.Jii'],rJii)
 
   return pd.DataFrame.from_dict(index_dict,'index').T
 
-from itertools import product, tee
+from itertools import product, tee, chain
 
 def dictProduct(**kwargs):
   ks = kwargs.keys()
@@ -323,48 +372,63 @@ def dictProduct(**kwargs):
     yield dict(zip(ks,vs))
 
 if __name__=='__main__':
-  from multiprocess import get_context
-  from tqdm import tqdm
-  ctx = get_context('forkserver')
+  def produce_params(b):
+    kf_arg_ranges = {
+      't_stop': [10000],
+      'b': [b],
+      'Je_scale': np.logspace(-1,1,7),
+      'Ji_scale': np.logspace(-1,1,7),
+      'justEI': [True],
+      'index': range(2),
+    }
+    kf_arg_ranges_dbs = dict(kf_arg_ranges)
+    kf_arg_ranges_dbs.update({
+      'dbs_times': [
+        np.arange(2500,7500,100),
+      ],    
+      'dbs_tgts': ['EI'],
+      'dbs_pct_aff': [0.1],#,0.1,0.2],
+      'dbs_pct_eff': [0.1],#,,0.1,0.2],
+    })
 
-  kf_arg_ranges = {
-    't_stop': [100],
-    'b': np.linspace(0,1,11)[1:-1],
-    # 'Je_scale': [1,0.1],
-    # 'Ji_scale': [1,0.1],
-    # 'justEI': [False,True],
-  }
+    ei_arg_ranges = {
+      'b': [b],
+      'index': range(2),
+    }
 
-  ei_arg_ranges = {
-    'b': np.linspace(0,1,11)[1:-1],
-  }
+    kf_args = chain(
+      dictProduct(**kf_arg_ranges),
+      dictProduct(**kf_arg_ranges_dbs),
+    )
 
-  kf_args = dictProduct(**kf_arg_ranges)
-  ei_args = dictProduct(**ei_arg_ranges)
-  args = product(kf_args,ei_args)
+    ei_args = dictProduct(**ei_arg_ranges)
+    args = product(kf_args,ei_args)
+    return args
+  args = chain(*[produce_params(b) for b in [0.8]])
   args, _args = tee(args)
   n_sim = sum(1 for _ in _args)
 
-  with ctx.Pool(8) as p:
-    runs = p.imap(run,args,chunksize=max(1,1))
+  ctx = get_context('forkserver')
+  with ctx.Pool(16,maxtasksperchild=5) as p:
+    runs = p.imap(run,args)
     results = pd.concat(tqdm(runs,total=n_sim),ignore_index=True)
 
   results.to_csv('./raukf_sweep.csv')
     
-  # kf_lfp = kf_run.mon['net.lfp']
-  # # kf_input = kf_run.mon['net.Einput']
-  # kf_ts = kf_run.mon['ts']*kf_T
-  # stab_mask = kf_ts>=t_stab
+#   # kf_lfp = kf_run.mon['net.lfp']
+#   # # kf_input = kf_run.mon['net.Einput']
+#   # kf_ts = kf_run.mon['ts']*kf_T
+#   # stab_mask = kf_ts>=t_stab
 
-  # plt.plot(ts,observation,color='k')
-  # plt.plot(ts,obs,color='g')
-  # plt.plot(kf_ts,kf_lfp,linestyle=':',color='r')
-  # plt.figure()
-  # plt.plot(kf_ts,kf_run.mon['net.Je'],color='r')
-  # plt.hlines(net.Je.value,0,ts.max(),color='r',linestyle='--')
-  # plt.plot(kf_ts,kf_run.mon['net.Ji'],color='g')
-  # plt.hlines(net.Ji.value,0,ts.max(),color='g',linestyle='--')
-  # # plt.figure()
-  # # plt.plot(input,color='k')
-  # # plt.plot(kf_input,linestyle=':',color='r',linewidth=5)
-  # plt.show()
+#   # plt.plot(ts,observation,color='k')
+#   # plt.plot(ts,obs,color='g')
+#   # plt.plot(kf_ts,kf_lfp,linestyle=':',color='r')
+#   # plt.figure()
+#   # plt.plot(kf_ts,kf_run.mon['net.Je'],color='r')
+#   # plt.hlines(net.Je.value,0,ts.max(),color='r',linestyle='--')
+#   # plt.plot(kf_ts,kf_run.mon['net.Ji'],color='g')
+#   # plt.hlines(net.Ji.value,0,ts.max(),color='g',linestyle='--')
+#   # # plt.figure()
+#   # # plt.plot(input,color='k')
+#   # # plt.plot(kf_input,linestyle=':',color='r',linewidth=5)
+#   # plt.show()
