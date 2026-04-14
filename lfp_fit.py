@@ -285,13 +285,15 @@ default_ei_args = inspect.getfullargspec(EINet)
 default_ei_args = {
   k:v for k,v in zip(default_ei_args.args[1:],default_ei_args.defaults)
 }
+default_ei_args['index']=0
+default_ei_args['progress']=False
 
 @memory.cache
 def generate_obs(
     ei_args,t_stop=0,
     dbs_times=np.zeros(1),
     dbs_tgts='E', dbs_pct_aff=0.1, dbs_pct_eff=0.1,
-    R_obs=['lfp'],index=0
+    R_obs=['lfp'], index=0, progress=False,
 ):
   net_ = EINet(**ei_args)
   if dbs_tgts=='E':
@@ -305,7 +307,7 @@ def generate_obs(
   runner = bp.DSRunner(
     net,
     monitors=[f'net.{R}' for R in R_obs],
-    progress_bar=False
+    progress_bar=progress
   )
 
   _=runner.run(t_stop)
@@ -341,6 +343,7 @@ def _run(args):
   R_obs       = kf_args['R_obs']
 
   index       = ei_args.pop('index')
+  progress       = ei_args.pop('progress')
       
   ts,obs,(rJe,rJee,rJi,rJii) = generate_obs(
     ei_args,
@@ -349,6 +352,7 @@ def _run(args):
     dbs_tgts,dbs_pct_aff,dbs_pct_eff,
     R_obs,
     index,
+    progress,
   )
 
   index_dict = dict(kf_args)
@@ -362,7 +366,18 @@ def _run(args):
   index_dict['RMSE_Ji'] = rmse(kf_run.mon['net.net.Ji'],rJi)
   index_dict['RMSE_Jii'] = rmse(kf_run.mon['net.net.Jii'],rJii)
 
+  return obs,kf_run
+
+  breakpoint()
+
   return pd.DataFrame.from_dict(index_dict,'index').T
+
+obs1,nostim_max_min = run(({'t_stop':20000,'Je_scale':4,'Ji_scale':8,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp_max','lfp_min']},{'progress':True}))
+obs2,nostim_lfp = run(({'t_stop':20000,'Je_scale':4,'Ji_scale':8,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp']},{'progress':True}))
+obs3,stim_max_min = run(({'t_stop':20000,'Je_scale':4,'Ji_scale':8,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min']},{'progress':True}))
+obs4,stim_lfp = run(({'t_stop':20000,'Je_scale':4,'Ji_scale':8,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp']},{'progress':True}))
+
+plt.plot(nostim_max_min.mon['net.net.Je'],color='k')
 
 from itertools import product, tee, chain
 

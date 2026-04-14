@@ -8,7 +8,7 @@ RMSEs = [f'RMSE_{v}' for v in ['Je','Jee','Ji','Jii']]
 
 df_piv = df.pivot_table(index='b',columns=['justEI','Je_scale','sim_b'],values=RMSEs)
 
-for oRMSE in RMSEs:
+for RMSE in RMSEs:
     plt.figure()
     ax = plt.gca()
     sns.heatmap(df_piv[RMSE][True][1],ax=ax)
@@ -36,7 +36,7 @@ for b in bs:
         continue
       ax = axs[i]
       i+=1
-      sns.heatmap(df_stim_piv[RMSE][b][dbs],ax=ax,cmap='coolwarm')
+      sns.heatmap(df_stim_piv[RMSE][b][dbs],ax=ax,cmap='mako',norm='log')
       ax.invert_yaxis()
       ax.set_title(str(b) + ' ' + RMSE + (' DBS' if len(dbs)==4 else ''))
 plt.show()
