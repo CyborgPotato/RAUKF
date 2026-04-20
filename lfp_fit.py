@@ -372,12 +372,28 @@ def _run(args):
 
   return pd.DataFrame.from_dict(index_dict,'index').T
 
-obs1,nostim_max_min = run(({'t_stop':20000,'Je_scale':4,'Ji_scale':8,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp_max','lfp_min']},{'progress':True}))
-obs2,nostim_lfp = run(({'t_stop':20000,'Je_scale':4,'Ji_scale':8,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp']},{'progress':True}))
-obs3,stim_max_min = run(({'t_stop':20000,'Je_scale':4,'Ji_scale':8,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min']},{'progress':True}))
-obs4,stim_lfp = run(({'t_stop':20000,'Je_scale':4,'Ji_scale':8,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp']},{'progress':True}))
+t_stop=100000
+jes=4
+jis=8
+obs1,nostim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp_max','lfp_min']},{'progress':True}))
+obs2,nostim_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp']},{'progress':True}))
+obs3,stim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min']},{'progress':True}))
+obs4,stim_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp']},{'progress':True}))
+
+obs5,stim_max_min_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min','lfp']},{'progress':True}))
 
 plt.plot(nostim_max_min.mon['net.net.Je'],color='k')
+plt.plot(nostim_lfp.mon['net.net.Je'],color='k',linestyle='--')
+plt.plot(stim_max_min.mon['net.net.Je'],color='r')
+plt.plot(stim_lfp.mon['net.net.Je'],color='r',linestyle='--')
+plt.hlines(1,0,t_stop*10,color='b',linestyle='-.')
+plt.figure()
+plt.plot(nostim_max_min.mon['net.net.Ji'],color='k')
+plt.plot(nostim_lfp.mon['net.net.Ji'],color='k',linestyle='--')
+plt.plot(stim_max_min.mon['net.net.Ji'],color='r')
+plt.plot(stim_lfp.mon['net.net.Ji'],color='r',linestyle='--')
+plt.hlines(-6,0,t_stop*10,color='b',linestyle='-.')
+plt.show()
 
 from itertools import product, tee, chain
 
