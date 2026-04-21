@@ -154,11 +154,7 @@ class DBS(bp.DynamicalSystem):
       for post in self.posts[tgt]:
         x = np.ones(post.pre.size)*(n_dbs>0)
         pulse = _pulse(post)
-        # May be more GPU performant to not perform the conditional
-        # no-op: alternatively use x where
-        # x=np.ones(post.pre.size)*(n_dbs>0)
         pulse(x)
-        # cond(n_dbs>0,pulse,nop,x)
       for pre in self.pres[tgt]:
         x = np.ones(pre.pre.size)*(n_dbs>0)
         pulse = _pulse(pre)
