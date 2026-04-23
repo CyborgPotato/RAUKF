@@ -153,7 +153,7 @@ import gc
 def generate_obs(
     ei_args,t_stop=0,
     dbs_times=np.zeros(1),
-    dbs_tgts='E', dbs_pct_aff=0.1, dbs_pct_eff=0.1,
+    dbs_tgts='E', dbs_pct_aff=0.5, dbs_pct_eff=0.,
     R_obs=['lfp'], index=0, progress=False,
 ):
   net_ = EINet(**ei_args)

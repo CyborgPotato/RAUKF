@@ -6,6 +6,7 @@ from brainpy.context import share
 import brainstate.random as bsr
 
 from brainpy.math import cond
+import jax
 import jax.lax as lax
 import jax.numpy as jnp
 
@@ -20,6 +21,7 @@ class DBS(bp.DynamicalSystem):
     self.t_ = bm.Variable(1,batch_axis=0)
     self.DBS_aff_act = bm.Variable(bm.array([DBS_aff_act]))
     self.DBS_eff_act = bm.Variable(bm.array([DBS_eff_act]))
+    self._DBS_iter = bm.Variable(1,batch_axis=0)
     pres  = {tgt:[] for tgt in tgts}
     posts = {tgt:[] for tgt in tgts}
     for tgt in tgts:
@@ -33,47 +35,12 @@ class DBS(bp.DynamicalSystem):
               ), jnp.diff(comm.indptr)
             )
             comm.src_inds = src_inds
+            comm.sorted_src_inds = jnp.sort(comm.src_inds)
             comm.dst_inds = comm.indices
+            comm.sorted_dst_inds = jnp.sort(comm.dst_inds)
             comm.src_uniq = jnp.unique(src_inds)
             comm.dst_uniq = jnp.unique(comm.indices)
-
-            # We will recruit some fraction of synapses surrounding some
-            # fraction of the target population. This can be calculated
-            # prior to the stimulation starting.
-            DBS_aff_act = self.DBS_aff_act.value[0]
-            dsts    = comm.dst_uniq
-            dst_act = bm.sort(
-              bm.random.choice(
-                dsts,
-                max(int(dsts.size*DBS_aff_act),0)
-              )
-            )
-            dst_mask = jnp.isin(comm.dst_inds,dst_act)
-            comm.dst_act_inds = comm.dst_inds.at[dst_mask].get()
-            comm.src_act_inds = comm.src_inds.at[dst_mask].get()
-
-            act_indptr = np.zeros_like(comm.indptr)
-            sact_inds, sact_counts = np.unique(
-              comm.src_act_inds,return_counts=True
-            )
-
-            act_indptr[sact_inds+1] = sact_counts
-            act_indptr = np.cumsum(act_indptr)
             
-            comm.act_indices = comm.dst_act_inds
-            comm.act_indptr = act_indptr
-            ## Each Pulse some fraction of synapses will be
-            ## activated. This can either be calculated for each DBS
-            ## pulse or for all pulses separately prior to the
-            ## simulation starting This will require precalculating
-            ## the array size, e.g. if there are 1000 afferent
-            ## synapses, and we want to say some fixed probability of
-            ## recruitment of a synapse for each DBS pulse then we
-            ## need to store that value, e.g. 80% -> 800, prior to
-            ## running the simulation.
-            ### DBS_aff_syn_act = 0.8
-            ### dst_mask *=
-            ### bm.random.bernoulli(DBS_aff_syn_act,size=dst_inds)
             posts[tgt].append(v)
         except Exception as e:
           if not isinstance(e,AttributeError):
@@ -86,36 +53,16 @@ class DBS(bp.DynamicalSystem):
                 comm.indptr.size - 1
               ), jnp.diff(comm.indptr)
             )
+            comm.src_indptr = comm.indptr.copy()
             comm.src_inds = src_inds
             comm.dst_inds = comm.indices
             comm.src_uniq = jnp.unique(src_inds)
             comm.dst_uniq = jnp.unique(comm.indices)
+            comm.act_indices = bm.Variable(comm.indices)
+            comm.act_indptr = bm.Variable(comm.indptr)
+            comm.act_indptr = comm.act_indptr.at[:].set(v.post.size)
+            comm.act_indptr = comm.act_indptr.at[0].set(0)
 
-            # We will recruit some fraction of synapses surrounding some
-            # fraction of the target population. This can be calculated
-            # prior to the stimulation starting.
-            DBS_eff_act = self.DBS_eff_act.value[0]
-            srcs    = comm.src_uniq
-            src_act = bm.sort(
-              bm.random.choice(
-                srcs,
-                max(int(srcs.size*DBS_eff_act),0)
-              )
-            )
-            src_mask = jnp.isin(comm.src_inds,src_act)
-            comm.dst_act_inds = comm.dst_inds.at[src_mask].get()
-            comm.src_act_inds = comm.src_inds.at[src_mask].get()
-
-            act_indptr = np.zeros_like(comm.indptr)
-            sact_inds, sact_counts = np.unique(
-              comm.src_act_inds,return_counts=True
-            )
-
-            act_indptr[sact_inds+1] = sact_counts
-            act_indptr = np.cumsum(act_indptr)
-            
-            comm.act_indices = comm.dst_act_inds
-            comm.act_indptr = act_indptr
             pres[tgt].append(v)
         except Exception as e:
           if not isinstance(e,AttributeError):
@@ -129,34 +76,64 @@ class DBS(bp.DynamicalSystem):
     n_pre  = self.dbs_times > self.last_dbs
     n_dbs  = (n_past & n_pre).sum()
     self.dbs_idx.value += n_dbs
-    def nop(*args):
-      return
-    def upd_dbs():
-      self.last_dbs.value = jnp.take(self.dbs_times,self.dbs_idx)
-    cond(n_dbs>0,upd_dbs,nop)
+    self.last_dbs.value = jnp.take(self.dbs_times,self.dbs_idx-1)*(self.dbs_idx>0)
+    self.DBS_aff_act.value -= 0.01*(n_dbs>0)
     def _pulse(connection):
       comm = connection.comm
       syn = connection.syn
       def pulse(x):
-        old_indices = comm.indices
-        old_indptr = comm.indptr
-        comm.indices = comm.act_indices
-        comm.indptr = comm.act_indptr
-        delta = comm.update(x)
-        comm.indices = old_indices
-        comm.indptr = old_indptr
-        syn.add_current(delta)
+        syn.add_current(x*comm.weight)
       return pulse
 
     for tgt in self.tgts:
       # Where the target is post/destination so DBS will activate some
       # fraction of the afferent indices
       for post in self.posts[tgt]:
-        x = np.ones(post.pre.size)*(n_dbs>0)
+        comm = post.comm
+        n_tgt = (comm.dst_uniq.size*self.DBS_aff_act).astype(int)
+        n_sel = jnp.arange(comm.dst_uniq.size)<n_tgt
+        syns  = jnp.sort(jnp.where(n_sel,comm.dst_uniq,-1))
+
+        mask = jnp.zeros_like(comm.sorted_dst_inds,dtype=bool)
+        def cond(args):
+          i,j,mask = args
+          return jnp.all((i<comm.sorted_dst_inds.size) * (j<syns.size))
+        def body(args):
+          i,j,mask = args
+          v = syns.at[j].get()
+          c = comm.sorted_dst_inds.at[i].get()
+          mask = mask.at[i].set(c==v)
+          i+=c<=v
+          j+=c>v
+          return i,j,mask
+        _,_,mask = lax.while_loop(cond,body,(0,0,mask))
+
+        # mask = jnp.isin(comm.sorted_dst_inds,syns)
+          
+        # indices = jnp.where(mask,comm.dst_inds,-1)
+        # x = jnp.zeros(post.post.size)
+        # for i in range(post.post.size[0]):
+        #   ind = indices[i]
+        #   x = x.at[ind].set(x[ind] + ind>=0)
+        indices = mask * comm.sorted_dst_inds
+        x = jnp.bincount(indices,length=post.post.size[0])
+        x = x.at[0].set( x[0]-(~mask).sum() )
+        x = x*n_dbs
         pulse = _pulse(post)
         pulse(x)
-      for pre in self.pres[tgt]:
-        x = np.ones(pre.pre.size)*(n_dbs>0)
-        pulse = _pulse(pre)
-        pulse(x)
+      # for pre in self.pres[tgt]:
+      #   x = jnp.zeros(pre.pre.size)
+      #   x = x.at[0].set(n_dbs>0)
+      #   comm = pre.comm
+      #   n_tgt = (comm.src_uniq.size*self.DBS_eff_act).astype(int)
+      #   n_sel = jnp.arange(comm.src_uniq.size)<n_tgt
+      #   syns  = jnp.where(n_sel,comm.src_uniq,-1)
+      #   mask  = jnp.isin(comm.src_inds,syns)
+      #   indices = jnp.sort(jnp.where(mask,comm.dst_inds,0),descending=True)
+      #   n_syns = jnp.sum(mask)
+      #   indptr = jnp.ones_like(comm.indptr)*pre.post.size[0]
+      #   indptr = indptr.at[0].set(0)
+      #   indptr = indptr.at[1].set(n_syns)
+      #   pulse = _pulse(pre)
+      #   pulse(x,indices,indptr)
     return self.net()
