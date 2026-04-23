@@ -94,25 +94,19 @@ class DBS(bp.DynamicalSystem):
         n_sel = jnp.arange(comm.dst_uniq.size)<n_tgt
         syns  = jnp.sort(jnp.where(n_sel,comm.dst_uniq,-1))
 
-        # Optimized isin for two 1d sorted arrays
-        # mask = jnp.isin(comm.sorted_dst_inds,syns,method='binary_search')
-        mask = jnp.zeros_like(comm.sorted_dst_inds,dtype=bool)
+        x = jnp.zeros(post.post.size,dtype=int)
         def cond(args):
-          i,j,mask = args
+          i,j,x = args
           return jnp.any((i<comm.sorted_dst_inds.size) * (j<syns.size))
         def body(args):
-          i,j,mask = args
+          i,j,x = args
           v = syns.at[j].get()
           c = comm.sorted_dst_inds.at[i].get()
-          mask = mask.at[i].set(c==v)
+          x = x.at[c].set(x[c]+(c==v))
           i+=c<=v
           j+=c>v
-          return i,j,mask
-        _,_,mask = lax.while_loop(cond,body,(0,(~n_sel).sum(),mask))
-          
-        indices = mask * comm.sorted_dst_inds
-        x = jnp.bincount(indices,length=post.post.size[0])
-        x = x.at[0].set( x[0]-(~mask).sum() )
+          return i,j,x
+        _,_,x = lax.while_loop(cond,body,(0,(~n_sel).sum(),x))
         x = x*n_dbs
         pulse = _pulse(post)
         pulse(x)
