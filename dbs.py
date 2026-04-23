@@ -94,10 +94,12 @@ class DBS(bp.DynamicalSystem):
         n_sel = jnp.arange(comm.dst_uniq.size)<n_tgt
         syns  = jnp.sort(jnp.where(n_sel,comm.dst_uniq,-1))
 
+        # Optimized isin for two 1d sorted arrays
+        # mask = jnp.isin(comm.sorted_dst_inds,syns,method='binary_search')
         mask = jnp.zeros_like(comm.sorted_dst_inds,dtype=bool)
         def cond(args):
           i,j,mask = args
-          return jnp.all((i<comm.sorted_dst_inds.size) * (j<syns.size))
+          return jnp.any((i<comm.sorted_dst_inds.size) * (j<syns.size))
         def body(args):
           i,j,mask = args
           v = syns.at[j].get()
@@ -106,15 +108,8 @@ class DBS(bp.DynamicalSystem):
           i+=c<=v
           j+=c>v
           return i,j,mask
-        _,_,mask = lax.while_loop(cond,body,(0,0,mask))
-
-        # mask = jnp.isin(comm.sorted_dst_inds,syns)
+        _,_,mask = lax.while_loop(cond,body,(0,(~n_sel).sum(),mask))
           
-        # indices = jnp.where(mask,comm.dst_inds,-1)
-        # x = jnp.zeros(post.post.size)
-        # for i in range(post.post.size[0]):
-        #   ind = indices[i]
-        #   x = x.at[ind].set(x[ind] + ind>=0)
         indices = mask * comm.sorted_dst_inds
         x = jnp.bincount(indices,length=post.post.size[0])
         x = x.at[0].set( x[0]-(~mask).sum() )
