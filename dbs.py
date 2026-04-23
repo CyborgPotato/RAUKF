@@ -53,15 +53,12 @@ class DBS(bp.DynamicalSystem):
                 comm.indptr.size - 1
               ), jnp.diff(comm.indptr)
             )
-            comm.src_indptr = comm.indptr.copy()
             comm.src_inds = src_inds
+            comm.sorted_src_inds = jnp.sort(comm.src_inds)
             comm.dst_inds = comm.indices
+            comm.sorted_dst_inds = jnp.sort(comm.dst_inds)
             comm.src_uniq = jnp.unique(src_inds)
             comm.dst_uniq = jnp.unique(comm.indices)
-            comm.act_indices = bm.Variable(comm.indices)
-            comm.act_indptr = bm.Variable(comm.indptr)
-            comm.act_indptr = comm.act_indptr.at[:].set(v.post.size)
-            comm.act_indptr = comm.act_indptr.at[0].set(0)
 
             pres[tgt].append(v)
         except Exception as e:
@@ -77,7 +74,6 @@ class DBS(bp.DynamicalSystem):
     n_dbs  = (n_past & n_pre).sum()
     self.dbs_idx.value += n_dbs
     self.last_dbs.value = jnp.take(self.dbs_times,self.dbs_idx-1)*(self.dbs_idx>0)
-    self.DBS_aff_act.value -= 0.01*(n_dbs>0)
     def _pulse(connection):
       comm = connection.comm
       syn = connection.syn
@@ -90,10 +86,10 @@ class DBS(bp.DynamicalSystem):
       # fraction of the afferent indices
       for post in self.posts[tgt]:
         comm = post.comm
-        n_tgt = (comm.dst_uniq.size*self.DBS_aff_act).astype(int)
+        n_tgt = (comm.dst_uniq.size*self.DBS_aff_act*(n_dbs>0)).astype(int)
         n_sel = jnp.arange(comm.dst_uniq.size)<n_tgt
         syns  = jnp.sort(jnp.where(n_sel,comm.dst_uniq,-1))
-
+        
         x = jnp.zeros(post.post.size,dtype=int)
         def cond(args):
           i,j,x = args
@@ -110,19 +106,27 @@ class DBS(bp.DynamicalSystem):
         x = x*n_dbs
         pulse = _pulse(post)
         pulse(x)
-      # for pre in self.pres[tgt]:
-      #   x = jnp.zeros(pre.pre.size)
-      #   x = x.at[0].set(n_dbs>0)
-      #   comm = pre.comm
-      #   n_tgt = (comm.src_uniq.size*self.DBS_eff_act).astype(int)
-      #   n_sel = jnp.arange(comm.src_uniq.size)<n_tgt
-      #   syns  = jnp.where(n_sel,comm.src_uniq,-1)
-      #   mask  = jnp.isin(comm.src_inds,syns)
-      #   indices = jnp.sort(jnp.where(mask,comm.dst_inds,0),descending=True)
-      #   n_syns = jnp.sum(mask)
-      #   indptr = jnp.ones_like(comm.indptr)*pre.post.size[0]
-      #   indptr = indptr.at[0].set(0)
-      #   indptr = indptr.at[1].set(n_syns)
-      #   pulse = _pulse(pre)
-      #   pulse(x,indices,indptr)
+      for pre in self.pres[tgt]:
+        comm = pre.comm
+        n_tgt = (comm.src_uniq.size*self.DBS_eff_act*(n_dbs>0)).astype(int)
+        n_sel = jnp.arange(comm.src_uniq.size)<n_tgt
+        syns  = jnp.sort(jnp.where(n_sel,comm.src_uniq,-1))
+        
+        x = jnp.zeros(pre.post.size,dtype=int)
+        def cond(args):
+          i,j,x = args
+          return jnp.any((i<comm.sorted_src_inds.size) * (j<syns.size))
+        def body(args):
+          i,j,x = args
+          v = syns.at[j].get()
+          c = comm.sorted_src_inds.at[i].get()
+          e = comm.sorted_dst_inds.at[i].get()
+          x = x.at[e].set(x[e]+(c==v))
+          i+=c<=v
+          j+=c>v
+          return i,j,x
+        _,_,x = lax.while_loop(cond,body,(0,(~n_sel).sum(),x))
+        x = x*n_dbs
+        pulse = _pulse(pre)
+        pulse(x)
     return self.net()
