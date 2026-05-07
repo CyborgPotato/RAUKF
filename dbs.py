@@ -86,7 +86,7 @@ class DBS(bp.DynamicalSystem):
       # fraction of the afferent indices
       for post in self.posts[tgt]:
         comm = post.comm
-        n_tgt = (comm.dst_uniq.size*self.DBS_aff_act*(n_dbs>0)).astype(int)
+        n_tgt = (comm.dst_uniq.size*jnp.abs(self.DBS_aff_act)*(n_dbs>0)).astype(int)
         n_sel = jnp.arange(comm.dst_uniq.size)<n_tgt
         syns  = jnp.sort(jnp.where(n_sel,comm.dst_uniq,-1))
         
@@ -108,7 +108,7 @@ class DBS(bp.DynamicalSystem):
         pulse(x)
       for pre in self.pres[tgt]:
         comm = pre.comm
-        n_tgt = (comm.src_uniq.size*self.DBS_eff_act*(n_dbs>0)).astype(int)
+        n_tgt = (comm.src_uniq.size*jnp.abs(self.DBS_eff_act)*(n_dbs>0)).astype(int)
         n_sel = jnp.arange(comm.src_uniq.size)<n_tgt
         syns  = jnp.sort(jnp.where(n_sel,comm.src_uniq,-1))
         

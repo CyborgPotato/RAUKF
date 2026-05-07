@@ -153,7 +153,7 @@ import gc
 def generate_obs(
     ei_args,t_stop=0,
     dbs_times=np.zeros(1),
-    dbs_tgts='E', dbs_pct_aff=0.5, dbs_pct_eff=0.,
+    dbs_tgts='E', dbs_pct_aff=0.1, dbs_pct_eff=0.1,
     R_obs=['lfp'], index=0, progress=False,
 ):
   net_ = EINet(**ei_args)
@@ -183,7 +183,7 @@ def generate_obs(
     net.net.Jii.value
   )
 
-ts,obs,(rJe,rJee,rJi,rJii) = generate_obs({},10000,np.arange(2500,7500,100),progress=True)
+ts,obs,(rJe,rJee,rJi,rJii) = generate_obs({},10000,np.arange(2500,7500,10),progress=True)
 
 plt.plot(ts,obs)
 plt.show()
