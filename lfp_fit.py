@@ -94,6 +94,8 @@ class EINet(bp.DynamicalSystem):
 
     self.NE = bp.dyn.OUProcess(ne,0,4,10)
     self.NI = bp.dyn.OUProcess(ni,0,4,10)
+    # self.NE = lambda: 100/3
+    # self.NI = lambda: 100/3
     
     self.lfp_trace = bm.Variable(100,batch_axis=0)
     self.lfp = bm.Variable(1,batch_axis=0)
@@ -389,47 +391,47 @@ def _run(args):
   index_dict['RMSE_Ji'] = rmse(kf_run.mon['net.net.Ji'],rJi)
   index_dict['RMSE_Jii'] = rmse(kf_run.mon['net.net.Jii'],rJii)
 
-  return obs,kf_run
+  # return obs,kf_run
 
-  breakpoint()
+  # breakpoint()
 
   return pd.DataFrame.from_dict(index_dict,'index').T
 
-t_stop=10000
-jes=1
-jis=1
-affs=1.
-effs=0.1
+# t_stop=10000
+# jes=1
+# jis=1
+# affs=1.
+# effs=0.1
 # obs1,nostim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_pct_aff':0.5,'dbs_pct_eff':0.5},{'progress':True}))
 # obs2,nostim_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp']},{'progress':True}))
-obs3,stim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_pct_aff':0.,'dbs_pct_eff':0.05},{'progress':True}))
-# plt.plot(stim_max_min.mon['net.DBS_aff_act'])
+# obs3,stim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_pct_aff':0.,'dbs_pct_eff':0.05},{'progress':True}))
+# # plt.plot(stim_max_min.mon['net.DBS_aff_act'])
 
-plt.plot(stim_max_min.mon['net.DBS_eff_act'],color='k')
-plt.hlines(0.05,0,t_stop*10,color='r')
-plt.fill_betweenx([0,0.1],[25000,25000],[75000,75000],color='k',alpha=0.5)
-plt.ylabel('Estimated % Recruited by DBS')
-plt.xlabel('Time Step (#)')
-plt.show()
-plt.plot(obs3[:,0],color='r')
-plt.plot(stim_max_min.mon['net.net.lfp_max'],color='k')
-plt.show()
-# obs4,stim_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp']},{'progress':True}))
+# plt.plot(stim_max_min.mon['net.DBS_eff_act'],color='k')
+# plt.hlines(0.05,0,t_stop*10,color='r')
+# plt.fill_betweenx([0,0.1],[25000,25000],[75000,75000],color='k',alpha=0.5)
+# plt.ylabel('Estimated % Recruited by DBS')
+# plt.xlabel('Time Step (#)')
+# plt.show()
+# plt.plot(obs3[:,0],color='r')
+# plt.plot(stim_max_min.mon['net.net.lfp_max'],color='k')
+# plt.show()
+# # obs4,stim_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp']},{'progress':True}))
 
-# obs5,stim_max_min_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min','lfp']},{'progress':True}))
+# # obs5,stim_max_min_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min','lfp']},{'progress':True}))
 
-plt.plot(nostim_max_min.mon['net.net.Je'],color='k')
-plt.plot(nostim_lfp.mon['net.net.Je'],color='k',linestyle='--')
-plt.plot(stim_max_min.mon['net.net.Je'],color='r')
-plt.plot(stim_lfp.mon['net.net.Je'],color='r',linestyle='--')
-plt.hlines(1,0,t_stop*10,color='b',linestyle='-.')
-plt.figure()
-plt.plot(nostim_max_min.mon['net.net.Ji'],color='k')
-plt.plot(nostim_lfp.mon['net.net.Ji'],color='k',linestyle='--')
-plt.plot(stim_max_min.mon['net.net.Ji'],color='r')
-plt.plot(stim_lfp.mon['net.net.Ji'],color='r',linestyle='--')
-plt.hlines(-6,0,t_stop*10,color='b',linestyle='-.')
-plt.show()
+# plt.plot(nostim_max_min.mon['net.net.Je'],color='k')
+# plt.plot(nostim_lfp.mon['net.net.Je'],color='k',linestyle='--')
+# plt.plot(stim_max_min.mon['net.net.Je'],color='r')
+# plt.plot(stim_lfp.mon['net.net.Je'],color='r',linestyle='--')
+# plt.hlines(1,0,t_stop*10,color='b',linestyle='-.')
+# plt.figure()
+# plt.plot(nostim_max_min.mon['net.net.Ji'],color='k')
+# plt.plot(nostim_lfp.mon['net.net.Ji'],color='k',linestyle='--')
+# plt.plot(stim_max_min.mon['net.net.Ji'],color='r')
+# plt.plot(stim_lfp.mon['net.net.Ji'],color='r',linestyle='--')
+# plt.hlines(-6,0,t_stop*10,color='b',linestyle='-.')
+# plt.show()
 
 from itertools import product, tee, chain
 
@@ -443,10 +445,12 @@ if __name__=='__main__':
     kf_arg_ranges = {
       't_stop': [10000],
       'b': [b],
-      'Je_scale': np.logspace(-1,1,7),
-      'Ji_scale': np.logspace(-1,1,7),
+      # 'Je_scale': np.logspace(-1,1,5),
+      # 'Ji_scale': np.logspace(-1,1,5),
+      'Je_scale': [2],
+      'Ji_scale': [2],
       'justEI': [True],
-      'index': range(2),
+      'index': range(50),
     }
     kf_arg_ranges_dbs = dict(kf_arg_ranges)
     kf_arg_ranges_dbs.update({
@@ -457,15 +461,29 @@ if __name__=='__main__':
       'dbs_pct_aff': [0.1],#,0.1,0.2],
       'dbs_pct_eff': [0.1],#,,0.1,0.2],
     })
+    kf_arg_ranges_dbs2 = []
+    for _ in range(5):
+      dbs = dict(kf_arg_ranges)
+      dbs.update({
+        'dbs_times': [
+          np.arange(2500,7500,100)+np.random.uniform(-25,25,size=50),
+        ],    
+        'dbs_tgts': ['EI'],
+        'dbs_pct_aff': [0.1],#,0.1,0.2],
+        'dbs_pct_eff': [0.1],#,,0.1,0.2],
+        'index': range(10),
+      })
+      kf_arg_ranges_dbs2.append(dictProduct(**dbs))
 
     ei_arg_ranges = {
       'b': [b],
-      'index': range(2),
+      'index': range(1),
     }
 
     kf_args = chain(
       dictProduct(**kf_arg_ranges),
       dictProduct(**kf_arg_ranges_dbs),
+      *kf_arg_ranges_dbs2,
     )
 
     ei_args = dictProduct(**ei_arg_ranges)
