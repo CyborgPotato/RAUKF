@@ -1285,7 +1285,6 @@ dependencies = [
 dev = [
     { name = "ipython" },
     { name = "python-lsp-server" },
-    { name = "readline" },
 ]
 
 [package.metadata]
@@ -1309,14 +1308,7 @@ requires-dist = [
 dev = [
     { name = "ipython", specifier = ">=9.7.0" },
     { name = "python-lsp-server", specifier = ">=1.13.1" },
-    { name = "readline", specifier = ">=6.2.4.2" },
 ]
-
-[[package]]
-name = "readline"
-version = "6.2.4.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/38/ae/946d64a37437c3f99c72ebb11db4d399352df75526f01f7f5f3bb5f80c23/readline-6.2.4.2.tar.gz", hash = "sha256:a5dbad674bd8e0caf86ddd9af493d53557d973e9666b4ee07377009c2bf75bb2", size = 2315142, upload-time = "2022-10-12T14:56:58.318Z" }
 
 [[package]]
 name = "saiunit"
