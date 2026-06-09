@@ -19,8 +19,6 @@ class DBS(bp.DynamicalSystem):
     self.dbs_idx = bm.Variable(1,dtype=int,batch_axis=0)
     self.tgts = tgts
     self.t_ = bm.Variable(1,batch_axis=0)
-    self.DBS_aff_act = bm.Variable(bm.array([DBS_aff_act]))
-    self.DBS_eff_act = bm.Variable(bm.array([DBS_eff_act]))
     self._DBS_iter = bm.Variable(1,batch_axis=0)
     pres  = {tgt:[] for tgt in tgts}
     posts = {tgt:[] for tgt in tgts}
@@ -40,7 +38,20 @@ class DBS(bp.DynamicalSystem):
             comm.sorted_dst_inds = jnp.sort(comm.dst_inds)
             comm.src_uniq = jnp.unique(src_inds)
             comm.dst_uniq = jnp.unique(comm.indices)
-            
+            if   isinstance(DBS_aff_act, list):
+              for pop,pct in DBS_aff_act:
+                if pop == v.pre:
+                  comm.DBS_aff_act = bm.Variable(bm.array([pct]))
+                  break
+            elif isinstance(DBS_aff_act,float):
+              comm.DBS_aff_act = bm.Variable(bm.array([DBS_aff_act]))
+            if   isinstance(DBS_eff_act, list):
+              for pop,pct in DBS_eff_act:
+                if pop == v.pre:
+                  comm.DBS_eff_act = bm.Variable(bm.array([pct]))
+                  break
+            elif isinstance(DBS_eff_act,float):
+              comm.DBS_eff_act = bm.Variable(bm.array([DBS_eff_act]))
             posts[tgt].append(v)
         except Exception as e:
           if not isinstance(e,AttributeError):
@@ -59,6 +70,20 @@ class DBS(bp.DynamicalSystem):
             comm.sorted_dst_inds = jnp.sort(comm.dst_inds)
             comm.src_uniq = jnp.unique(src_inds)
             comm.dst_uniq = jnp.unique(comm.indices)
+            if   isinstance(DBS_aff_act, list):
+              for pop,pct in DBS_aff_act:
+                if pop == v.pre:
+                  comm.DBS_aff_act = bm.Variable(bm.array([pct]))
+                  break
+            elif isinstance(DBS_aff_act,float):
+              comm.DBS_aff_act = bm.Variable(bm.array([DBS_aff_act]))
+            if   isinstance(DBS_eff_act, list):
+              for pop,pct in DBS_eff_act:
+                if pop == v.pre:
+                  comm.DBS_eff_act = bm.Variable(bm.array([pct]))
+                  break
+            elif isinstance(DBS_eff_act,float):
+              comm.DBS_eff_act = bm.Variable(bm.array([DBS_eff_act]))
 
             pres[tgt].append(v)
         except Exception as e:
@@ -86,7 +111,7 @@ class DBS(bp.DynamicalSystem):
       # fraction of the afferent indices
       for post in self.posts[tgt]:
         comm = post.comm
-        n_tgt = (comm.dst_uniq.size*jnp.abs(self.DBS_aff_act)*(n_dbs>0)).astype(int)
+        n_tgt = (comm.dst_uniq.size*jnp.abs(comm.DBS_aff_act)*(n_dbs>0)).astype(int)
         n_sel = jnp.arange(comm.dst_uniq.size)<n_tgt
         syns  = jnp.sort(jnp.where(n_sel,comm.dst_uniq,-1))
         
@@ -108,7 +133,7 @@ class DBS(bp.DynamicalSystem):
         pulse(x)
       for pre in self.pres[tgt]:
         comm = pre.comm
-        n_tgt = (comm.src_uniq.size*jnp.abs(self.DBS_eff_act)*(n_dbs>0)).astype(int)
+        n_tgt = (comm.src_uniq.size*jnp.abs(comm.DBS_eff_act)*(n_dbs>0)).astype(int)
         n_sel = jnp.arange(comm.src_uniq.size)<n_tgt
         syns  = jnp.sort(jnp.where(n_sel,comm.src_uniq,-1))
         
