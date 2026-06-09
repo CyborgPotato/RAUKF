@@ -2,14 +2,13 @@
   description = "Develop Python on Nix with uv";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs#nixos-25.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
   };
 
   outputs =
     { nixpkgs, ... }:
     let
-      pkgs = import "${nixpkgs}/lib";
-      inherit (pkgs) lib;
+      inherit (nixpkgs) lib;
       forAllSystems = lib.genAttrs lib.systems.flakeExposed;
     in
     {
