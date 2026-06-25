@@ -55,7 +55,7 @@ class TsodyksMarkram(bp.dyn.Expon):
     self.g.value += weight * x * self.u
     self.y.value = self.y + x * self.u
 
-    active = weight>0
+    active = weight!=0
     self.tsyn.value = (active)*self.tsyn.at[:].set(t) +\
         (~active)*self.tsyn
 
