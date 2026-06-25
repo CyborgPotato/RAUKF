@@ -1,8 +1,9 @@
 import seaborn as sns
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 
-df = pd.read_csv('raukf_sweep.csv')
+df = pd.read_pickle('raukf_sweep.pickle')
 
 RMSEs = [f'RMSE_{v}' for v in ['Je','Jee','Ji','Jii']]
 
@@ -40,3 +41,18 @@ for b in bs:
       ax.invert_yaxis()
       ax.set_title(str(b) + ' ' + RMSE + (' DBS' if len(dbs)==4 else ''))
 plt.show()
+
+
+for i,row in df.iterrows():
+    if row.Je_scale >= 1:
+        continue
+    if row.Ji_scale >= 1:
+        continue
+    color = 'k'
+    dbs = row.dbs_times
+    if dbs.size > 1:
+        if (dbs[1] - dbs[0]) == (dbs[2]-dbs[1]):
+            color='r'
+        else:
+            color='b'
+    plt.plot(row.EST_Ji,color=color,alpha=0.05)
