@@ -426,12 +426,16 @@ def _run(args):
   kf_args['obs'] = obs
   kf_run = fit_lfp_obs(**kf_args)
 
+  index_dict['EST_Je'] = kf_run.mon['net.net.Je']
+  index_dict['EST_Jee'] = kf_run.mon['net.net.Jee']
+  index_dict['EST_Ji'] = kf_run.mon['net.net.Ji']
+  index_dict['EST_Jii'] = kf_run.mon['net.net.Jii']
   index_dict['RMSE_Je'] = rmse(kf_run.mon['net.net.Je'],rJe)
   index_dict['RMSE_Jee'] = rmse(kf_run.mon['net.net.Jee'],rJee)
   index_dict['RMSE_Ji'] = rmse(kf_run.mon['net.net.Ji'],rJi)
   index_dict['RMSE_Jii'] = rmse(kf_run.mon['net.net.Jii'],rJii)
 
-  return obs,kf_run
+  # return obs,kf_run
 
   # breakpoint()
 
@@ -496,7 +500,7 @@ if __name__=='__main__':
       'Ji_scale': np.logspace(-1,1,5),
       # 'Je_scale': [2],
       # 'Ji_scale': [2],
-      'dbs_tgts_sub':[['E','I']],
+      # 'dbs_tgts_sub':[['E','I']],
       'dbs_tgts': ['EI'],
       'justEI': [True],
       'index': range(10),
@@ -504,9 +508,9 @@ if __name__=='__main__':
     kf_arg_ranges_dbs = dict(kf_arg_ranges)
     kf_arg_ranges_dbs.update({
       'dbs_times': [
-        np.arange(2500,7500,100),
+        np.arange(2500,7500,10),
       ],    
-      'dbs_tgts_sub':[['E','I']],
+      # 'dbs_tgts_sub':[['E','I']],
       'dbs_tgts': ['EI'],
       'dbs_pct_aff': [0.1],#,0.1,0.2],
       'dbs_pct_eff': [0.1],#,,0.1,0.2],
@@ -516,9 +520,9 @@ if __name__=='__main__':
       dbs = dict(kf_arg_ranges)
       dbs.update({
         'dbs_times': [
-          np.arange(2500,7500,100)+np.random.uniform(-25,25,size=50),
+          np.arange(2500,7500,10)+np.random.uniform(-2.5,2.5,size=500),
         ],
-        'dbs_tgts_sub':[['E','I']],
+        # 'dbs_tgts_sub':[['E','I']],
         'dbs_tgts': ['EI'],
         'dbs_pct_aff': [0.1],#,0.1,0.2],
         'dbs_pct_eff': [0.1],#,,0.1,0.2],
@@ -547,11 +551,11 @@ if __name__=='__main__':
   print(f'{n_sim} simulation(s) to run!')
   
   ctx = get_context('spawn')
-  with ctx.Pool(7,maxtasksperchild=5) as p:
+  with ctx.Pool(24,maxtasksperchild=5) as p:
     runs = p.imap(run,args)
     results = pd.concat(tqdm(runs,total=n_sim),ignore_index=True)
-
-  results.to_csv('./raukf_sweep.csv')
+  breakpoint()
+  results.to_pickle('./raukf_sweep.pickle')
     
 # #   # kf_lfp = kf_run.mon['net.lfp']
 # #   # # kf_input = kf_run.mon['net.Einput']
