@@ -1,6 +1,7 @@
 import numpy as np
 
 import brainpy as bp
+from brainpy.integrators.ode.generic import odeint
 import brainpy.math as bm
 from brainpy.context import share
 import brainstate.random as bsr
@@ -24,40 +25,46 @@ from tqdm import tqdm
 class TsodyksMarkram(bp.dyn.Expon):
   def __init__(self, size, *args, **kwargs):
     super().__init__(size, *args, **kwargs)
-    self.u0        = 1
-    self.U         = 1
-    self.tau_rec   = 100
-    self.tau_facil = 10
-    self.y         = bm.Variable(size)
+    self.u0        = 0
+    self.U         = 0.04
+    self.tau_rec   = 1
+    self.tau_facil = 0
     self.z         = bm.Variable(size)
     self.u         = bm.Variable(size)
-    self.u.value   = self.u.at[:].set(self.u0)
-    self.tsyn      = bm.Variable(size)
+    if self.tau_facil>0:
+      self.u.value   = self.u.at[:].set(self.u0)
+    else:
+      self.u.value   = self.u.at[:].set(self.U)
+    method = 'euler'
+    self.integral_g = odeint(self.derivative_g, method=method)
+    self.integral_z = odeint(self.derivative_z, method=method)
+    self.integral_u = odeint(self.derivative_u, method=method)
+
+  def derivative_g(self, g, t):
+    return -g / self.tau
+  def derivative_z(self, z, t, g):
+    return  g / self.tau - z / self.tau_rec
+  def derivative_u(self, u, t):
+    return -u / self.tau_facil
+
+  def update(self, x=None):
+    old_g = self.g.value
+    old_z = self.z.value
+    self.g.value = self.integral_g(old_g, share['t'], share['dt'])
+    self.z.value = self.integral_z(old_z, share['t'], old_g, share['dt'])
+    if self.tau_facil > 0:
+        self.u.value = self.integral_u(self.u.value, share['t'], share['dt'])
+    if x is not None:
+      self.add_current(x)
+    return self.g.value
+
   def add_current(self, weight):
-    t = bp.share['t']
-    self.z.value = self.z*bm.exp(-(t - self.tsyn)/self.tau_rec)
-    self.z.value = self.z + ( self.y*(
-        bm.exp(-(t - self.tsyn)/self.tau) -
-        bm.exp(-(t - self.tsyn)/self.tau_rec)
-    ) / ((self.tau/self.tau_rec)-1) )
-    self.y.value = self.y*bm.exp(-(t - self.tsyn)/self.tau)
-
-    x = 1-self.y-self.z
-
-    # calc u at event--
-    isfac = self.tau_facil > 0
-    self.u.value = \
-        isfac*(self.u*bm.exp(-(t - self.tsyn)/(self.tau_facil+(not isfac)))) +\
-        (not isfac)*(self.u.at[:].set(self.U))
-
-    self.u.value += isfac*(self.U*(1-self.u))
-
-    self.g.value += weight * x * self.u
-    self.y.value = self.y + x * self.u
-
     active = weight!=0
-    self.tsyn.value = (active)*self.tsyn.at[:].set(t) +\
-        (~active)*self.tsyn
+    x = 1-self.g-self.z
+    if self.tau_facil>0:
+      self.u.value += self.U*(1-self.u.value)*active
+    self.g.value += 185/4/1.6 * weight * x * self.u.value
+    return self.g.value
 
 class Exponential(bp.Projection):
   def __init__(self, pre, post, delay, prob, g_max, tau, E):
@@ -72,6 +79,9 @@ class Exponential(bp.Projection):
       syn=TsodyksMarkram(
           size=post.num, tau=tau
       ), # Exponential synapse
+      # syn=bp.dyn.Expon(
+          # size=post.num, tau=tau
+      # ), # Exponential synapse
       # out=bp.dyn.COBA(E=E), # COBA network
       out=bp.dyn.CUBA(),
       post=post
@@ -192,17 +202,21 @@ class SynTest(bp.DynamicalSystem):
     self.N()
     return
 
-DBS_freq = 50
+DBS_freq = 100
 n_dbs = 100
 syn_test = SynTest(DBS_freq,n_dbs)
 syn_run = bp.DSRunner(
   syn_test, monitors=[
     'N.V',
+    'con.pron.syn.g',
   ],
   progress_bar=False,
 )
 syn_run.run(1000/DBS_freq*(n_dbs+2))
 plt.plot(syn_run.mon['ts'],syn_run.mon['N.V'])
+# plt.plot(syn_run.mon['ts'],syn_run.mon['con.pron.syn.g'])
+# plt.plot(syn_run.mon['ts'],syn_run.mon['con.pron.syn.z'])
+# plt.plot(syn_run.mon['ts'],syn_run.mon['con.pron.syn.u'])
 plt.show()
 
 # import main as main_
@@ -468,7 +482,7 @@ def _run(args):
 
   return pd.DataFrame.from_dict(index_dict,'index').T
 
-t_stop=30000
+t_stop=10000
 jes=0.1
 jis=0.1
 affs=1.
@@ -482,7 +496,7 @@ obs1,nostim_max_min = run(
     'dbs_pct_aff':0.5,'dbs_pct_eff':0.5,
     },{'progress':True}))
 # obs2,nostim_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp']},{'progress':True}))
-obs3,stim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,dbs_isi)+10000,'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_pct_aff':0.,'dbs_pct_eff':0.05},{'progress':True}))
+# obs3,stim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,dbs_isi)+10000,'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_pct_aff':0.,'dbs_pct_eff':0.05},{'progress':True}))
 # # plt.plot(stim_max_min.mon['net.DBS_aff_act'])
 
 # plt.plot(stim_max_min.mon['net.DBS_eff_act'],color='k')
@@ -498,107 +512,107 @@ obs3,stim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_tim
 
 # # obs5,stim_max_min_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min','lfp']},{'progress':True}))
 
-plt.plot(nostim_max_min.mon['net.net.Je'],color='k')
-# plt.plot(nostim_lfp.mon['net.net.Je'],color='k',linestyle='--')
-plt.plot(stim_max_min.mon['net.net.Je'],color='r')
-# plt.plot(stim_lfp.mon['net.net.Je'],color='r',linestyle='--')
-plt.hlines(1,0,t_stop*10,color='b',linestyle='-.')
-plt.figure()
-plt.plot(nostim_max_min.mon['net.net.Ji'],color='k')
-# plt.plot(nostim_lfp.mon['net.net.Ji'],color='k',linestyle='--')
-plt.plot(stim_max_min.mon['net.net.Ji'],color='r')
-# plt.plot(stim_lfp.mon['net.net.Ji'],color='r',linestyle='--')
-plt.hlines(-6,0,t_stop*10,color='b',linestyle='-.')
-plt.show()
+# plt.plot(nostim_max_min.mon['net.net.Je'],color='k')
+# # plt.plot(nostim_lfp.mon['net.net.Je'],color='k',linestyle='--')
+# plt.plot(stim_max_min.mon['net.net.Je'],color='r')
+# # plt.plot(stim_lfp.mon['net.net.Je'],color='r',linestyle='--')
+# plt.hlines(1,0,t_stop*10,color='b',linestyle='-.')
+# plt.figure()
+# plt.plot(nostim_max_min.mon['net.net.Ji'],color='k')
+# # plt.plot(nostim_lfp.mon['net.net.Ji'],color='k',linestyle='--')
+# plt.plot(stim_max_min.mon['net.net.Ji'],color='r')
+# # plt.plot(stim_lfp.mon['net.net.Ji'],color='r',linestyle='--')
+# plt.hlines(-6,0,t_stop*10,color='b',linestyle='-.')
+# plt.show()
 
-# from itertools import product, tee, chain
-# from functools import partial
+# # from itertools import product, tee, chain
+# # from functools import partial
 
-# def dictProduct(**kwargs):
-#   ks = kwargs.keys()
-#   for vs in product(*kwargs.values()):
-#     yield dict(zip(ks,vs))
+# # def dictProduct(**kwargs):
+# #   ks = kwargs.keys()
+# #   for vs in product(*kwargs.values()):
+# #     yield dict(zip(ks,vs))
 
-# if __name__=='__main__':
-#   def produce_params(b):
-#     kf_arg_ranges = {
-#       't_stop': [10000],
-#       'b': [b],
-#       'Je_scale': np.logspace(-1,1,5),
-#       'Ji_scale': np.logspace(-1,1,5),
-#       # 'Je_scale': [2],
-#       # 'Ji_scale': [2],
-#       # 'dbs_tgts_sub':[['E','I']],
-#       'dbs_tgts': ['EI'],
-#       'justEI': [True],
-#       'index': range(10),
-#     }
-#     kf_arg_ranges_dbs = dict(kf_arg_ranges)
-#     kf_arg_ranges_dbs.update({
-#       'dbs_times': [
-#         np.arange(2500,7500,10),
-#       ],    
-#       # 'dbs_tgts_sub':[['E','I']],
-#       'dbs_tgts': ['EI'],
-#       'dbs_pct_aff': [0.1],#,0.1,0.2],
-#       'dbs_pct_eff': [0.1],#,,0.1,0.2],
-#     })
-#     kf_arg_ranges_dbs2 = []
-#     for _ in range(5):
-#       dbs = dict(kf_arg_ranges)
-#       dbs.update({
-#         'dbs_times': [
-#           np.arange(2500,7500,10)+np.random.uniform(-2.5,2.5,size=500),
-#         ],
-#         # 'dbs_tgts_sub':[['E','I']],
-#         'dbs_tgts': ['EI'],
-#         'dbs_pct_aff': [0.1],#,0.1,0.2],
-#         'dbs_pct_eff': [0.1],#,,0.1,0.2],
-#         'index': range(2),
-#       })
-#       kf_arg_ranges_dbs2.append(dictProduct(**dbs))
+# # if __name__=='__main__':
+# #   def produce_params(b):
+# #     kf_arg_ranges = {
+# #       't_stop': [10000],
+# #       'b': [b],
+# #       'Je_scale': np.logspace(-1,1,5),
+# #       'Ji_scale': np.logspace(-1,1,5),
+# #       # 'Je_scale': [2],
+# #       # 'Ji_scale': [2],
+# #       # 'dbs_tgts_sub':[['E','I']],
+# #       'dbs_tgts': ['EI'],
+# #       'justEI': [True],
+# #       'index': range(10),
+# #     }
+# #     kf_arg_ranges_dbs = dict(kf_arg_ranges)
+# #     kf_arg_ranges_dbs.update({
+# #       'dbs_times': [
+# #         np.arange(2500,7500,10),
+# #       ],    
+# #       # 'dbs_tgts_sub':[['E','I']],
+# #       'dbs_tgts': ['EI'],
+# #       'dbs_pct_aff': [0.1],#,0.1,0.2],
+# #       'dbs_pct_eff': [0.1],#,,0.1,0.2],
+# #     })
+# #     kf_arg_ranges_dbs2 = []
+# #     for _ in range(5):
+# #       dbs = dict(kf_arg_ranges)
+# #       dbs.update({
+# #         'dbs_times': [
+# #           np.arange(2500,7500,10)+np.random.uniform(-2.5,2.5,size=500),
+# #         ],
+# #         # 'dbs_tgts_sub':[['E','I']],
+# #         'dbs_tgts': ['EI'],
+# #         'dbs_pct_aff': [0.1],#,0.1,0.2],
+# #         'dbs_pct_eff': [0.1],#,,0.1,0.2],
+# #         'index': range(2),
+# #       })
+# #       kf_arg_ranges_dbs2.append(dictProduct(**dbs))
 
-#     ei_arg_ranges = {
-#       'b': [b],
-#       'index': range(1),
-#     }
+# #     ei_arg_ranges = {
+# #       'b': [b],
+# #       'index': range(1),
+# #     }
 
-#     kf_args = chain(
-#       dictProduct(**kf_arg_ranges),
-#       dictProduct(**kf_arg_ranges_dbs),
-#       *kf_arg_ranges_dbs2,
-#     )
+# #     kf_args = chain(
+# #       dictProduct(**kf_arg_ranges),
+# #       dictProduct(**kf_arg_ranges_dbs),
+# #       *kf_arg_ranges_dbs2,
+# #     )
 
-#     ei_args = dictProduct(**ei_arg_ranges)
-#     args = product(kf_args,ei_args)
-#     return args
-#   args = chain(*[produce_params(b) for b in [0.8]])
-#   args, _args = tee(args)
-#   n_sim = sum(1 for _ in _args)
+# #     ei_args = dictProduct(**ei_arg_ranges)
+# #     args = product(kf_args,ei_args)
+# #     return args
+# #   args = chain(*[produce_params(b) for b in [0.8]])
+# #   args, _args = tee(args)
+# #   n_sim = sum(1 for _ in _args)
 
-#   print(f'{n_sim} simulation(s) to run!')
+# #   print(f'{n_sim} simulation(s) to run!')
   
-#   ctx = get_context('spawn')
-#   with ctx.Pool(24,maxtasksperchild=5) as p:
-#     runs = p.imap(run,args)
-#     results = pd.concat(tqdm(runs,total=n_sim),ignore_index=True)
-#   breakpoint()
-#   results.to_pickle('./raukf_sweep.pickle')
+# #   ctx = get_context('spawn')
+# #   with ctx.Pool(24,maxtasksperchild=5) as p:
+# #     runs = p.imap(run,args)
+# #     results = pd.concat(tqdm(runs,total=n_sim),ignore_index=True)
+# #   breakpoint()
+# #   results.to_pickle('./raukf_sweep.pickle')
     
-# # #   # kf_lfp = kf_run.mon['net.lfp']
-# # #   # # kf_input = kf_run.mon['net.Einput']
-# # #   # kf_ts = kf_run.mon['ts']*kf_T
-# # #   # stab_mask = kf_ts>=t_stab
+# # # #   # kf_lfp = kf_run.mon['net.lfp']
+# # # #   # # kf_input = kf_run.mon['net.Einput']
+# # # #   # kf_ts = kf_run.mon['ts']*kf_T
+# # # #   # stab_mask = kf_ts>=t_stab
 
-# # #   # plt.plot(ts,observation,color='k')
-# # #   # plt.plot(ts,obs,color='g')
-# # #   # plt.plot(kf_ts,kf_lfp,linestyle=':',color='r')
-# # #   # plt.figure()
-# # #   # plt.plot(kf_ts,kf_run.mon['net.Je'],color='r')
-# # #   # plt.hlines(net.Je.value,0,ts.max(),color='r',linestyle='--')
-# # #   # plt.plot(kf_ts,kf_run.mon['net.Ji'],color='g')
-# # #   # plt.hlines(net.Ji.value,0,ts.max(),color='g',linestyle='--')
-# # #   # # plt.figure()
-# # #   # # plt.plot(input,color='k')
-# # #   # # plt.plot(kf_input,linestyle=':',color='r',linewidth=5)
-# # #   # plt.show()
+# # # #   # plt.plot(ts,observation,color='k')
+# # # #   # plt.plot(ts,obs,color='g')
+# # # #   # plt.plot(kf_ts,kf_lfp,linestyle=':',color='r')
+# # # #   # plt.figure()
+# # # #   # plt.plot(kf_ts,kf_run.mon['net.Je'],color='r')
+# # # #   # plt.hlines(net.Je.value,0,ts.max(),color='r',linestyle='--')
+# # # #   # plt.plot(kf_ts,kf_run.mon['net.Ji'],color='g')
+# # # #   # plt.hlines(net.Ji.value,0,ts.max(),color='g',linestyle='--')
+# # # #   # # plt.figure()
+# # # #   # # plt.plot(input,color='k')
+# # # #   # # plt.plot(kf_input,linestyle=':',color='r',linewidth=5)
+# # # #   # plt.show()
