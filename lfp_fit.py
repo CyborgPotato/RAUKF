@@ -154,7 +154,7 @@ def fit_lfp_obs(
     dbs_tgts='E', dbs_pct_aff=0.1, dbs_pct_eff=0.1,
     dbs_tgts_sub=['E'],
     justEI=True, R_obs=["lfp_max","lfp_min"],index=0,
-    aff_scale=1,eff_scale=1,
+    aff_scale=1,eff_scale=1,we_Q=8e-12,wi_Q=8e-12,
 ):
   if justEI:
     states = [
@@ -220,8 +220,8 @@ def fit_lfp_obs(
 
   # net_kf.x.value = net_kf.x.at[1].set(11)
 
-  we_Q = 1e-12*2*2*2#.25e-10 + 0.125e-10
-  wi_Q = 1e-12*2*2*2#.25e-10 + 0.125e-10
+  # we_Q = 1e-10#1e-12*2*2*2#.25e-10 + 0.125e-10
+  # wi_Q = 1e-10#1e-12*2*2*2#.25e-10 + 0.125e-10
   aff_Q = 1e-11
   eff_Q = aff_Q
   if justEI:
@@ -442,13 +442,18 @@ def _run(args):
   return pd.DataFrame.from_dict(index_dict,'index').T
 
 t_stop=10000
-jes=4
-jis=0.25
+jes=0.1
+jis=0.1
 affs=1.
 effs=0.1
-obs1,nostim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_pct_aff':0.5,'dbs_pct_eff':0.5},{'progress':True}))
-# obs2,nostim_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp']},{'progress':True}))
-# obs3,stim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_pct_aff':0.,'dbs_pct_eff':0.05},{'progress':True}))
+def gen_dbs_times(dbs_freq, t_dbs=5000, dbs_start=2500):
+  dbs_isi = 1000/dbs_freq
+  dbs_times = np.arange(0,t_dbs/dbs_isi)*dbs_isi + dbs_start
+  return dbs_times
+dbs_times = gen_dbs_times(100, 5000, 2500)
+obs1,nostim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_tgts_sub':['E','I'],'dbs_pct_aff':0.5,'dbs_pct_eff':0.5,'we_Q':1e-11,'wi_Q':1e-11},{'progress':True}))
+obs2,nostim_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.zeros(1),'dbs_tgts_sub':['E','I'],'progress':True,'R_obs':['lfp'],'we_Q':1e-10,'wi_Q':1e-10},{'progress':True}))
+# obs3,stim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':dbs_times,'progress':True,'R_obs':['lfp_max','lfp_min'],'aff_scale':affs,'eff_scale':effs,'dbs_tgts_sub':['E','I'],'dbs_pct_aff':0.,'dbs_pct_eff':0.1},{'progress':True}))
 # plt.plot(stim_max_min.mon['net.DBS_aff_act'])
 
 # # plt.plot(np.abs(stim_max_min.mon['net.DBS_eff_act']),color='k')
@@ -477,13 +482,13 @@ obs1,nostim_max_min = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_t
 # # obs5,stim_max_min_lfp = run(({'t_stop':t_stop,'Je_scale':jes,'Ji_scale':jis,'dbs_times':np.arange(2500,7500,100),'progress':True,'R_obs':['lfp_max','lfp_min','lfp']},{'progress':True}))
 
 plt.plot(nostim_max_min.mon['net.net.Je'],color='k')
-# plt.plot(nostim_lfp.mon['net.net.Je'],color='k',linestyle='--')
+plt.plot(nostim_lfp.mon['net.net.Je'],color='k',linestyle='--')
 # plt.plot(stim_max_min.mon['net.net.Je'],color='r')
 # plt.plot(stim_lfp.mon['net.net.Je'],color='r',linestyle='--')
 plt.hlines(1,0,t_stop*10,color='b',linestyle='-.')
 plt.figure()
 plt.plot(nostim_max_min.mon['net.net.Ji'],color='k')
-# plt.plot(nostim_lfp.mon['net.net.Ji'],color='k',linestyle='--')
+plt.plot(nostim_lfp.mon['net.net.Ji'],color='k',linestyle='--')
 # plt.plot(stim_max_min.mon['net.net.Ji'],color='r')
 # plt.plot(stim_lfp.mon['net.net.Ji'],color='r',linestyle='--')
 plt.hlines(-6,0,t_stop*10,color='b',linestyle='-.')
